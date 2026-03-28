@@ -1,31 +1,47 @@
-import { createClient } from '@/lib/supabase/server'
-import { NextResponse } from 'next/server'
+import { createServerClient } from '@supabase/ssr'
+import { NextResponse, type NextRequest } from 'next/server'
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   const { searchParams, origin } = new URL(request.url)
   const code = searchParams.get('code')
-  // if "next" is in search params, use it as the redirect URL
   const rawNext = searchParams.get('next') ?? '/dashboard'
-  // Validate: must be a relative path with no protocol-relative URLs
   const next = rawNext.startsWith('/') && !rawNext.startsWith('//') ? rawNext : '/dashboard'
 
   if (code) {
-    const supabase = await createClient()
+    const forwardedHost = request.headers.get('x-forwarded-host')
+    const isLocalEnv = process.env.NODE_ENV === 'development'
+    const redirectTo = isLocalEnv
+      ? `${origin}${next}`
+      : forwardedHost
+        ? `https://${forwardedHost}${next}`
+        : `${origin}${next}`
+
+    // Create the redirect response first so we can attach cookies directly to it
+    const response = NextResponse.redirect(redirectTo)
+
+    const supabase = createServerClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+      {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll()
+          },
+          setAll(cookiesToSet) {
+            // Write session cookies directly onto the redirect response
+            cookiesToSet.forEach(({ name, value, options }) =>
+              response.cookies.set(name, value, options)
+            )
+          },
+        },
+      }
+    )
+
     const { error } = await supabase.auth.exchangeCodeForSession(code)
     if (!error) {
-      const forwardedHost = request.headers.get('x-forwarded-host') // localhost:3000
-      const isLocalEnv = process.env.NODE_ENV === 'development'
-      if (isLocalEnv) {
-        // we can be sure that origin is http://localhost:3000
-        return NextResponse.redirect(`${origin}${next}`)
-      } else if (forwardedHost) {
-        return NextResponse.redirect(`https://${forwardedHost}${next}`)
-      } else {
-        return NextResponse.redirect(`${origin}${next}`)
-      }
+      return response
     }
   }
 
-  // return the user to an error page with instructions
   return NextResponse.redirect(`${origin}/login?error=Could not authenticate user`)
 }
