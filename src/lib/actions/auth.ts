@@ -98,7 +98,7 @@ export async function resetPassword(data: ResetPasswordValues) {
 
   const validatedFields = resetPasswordSchema.safeParse(data)
   if (!validatedFields.success) {
-    return { error: validatedFields.error.errors[0]?.message || 'Invalid fields' }
+    return { error: validatedFields.error.issues[0]?.message || 'Invalid fields' }
   }
 
   const { error } = await supabase.auth.updateUser({ password: data.password })
