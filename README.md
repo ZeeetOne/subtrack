@@ -1,36 +1,64 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# SubTrack
+
+A personal subscription expense tracker. See exactly what you're paying for, when you're paying for it, and how much it costs in your preferred currency.
+
+## Features
+
+- Track subscriptions across any billing cycle — weekly, monthly, quarterly, yearly, or one-time
+- Multi-currency support with live exchange rates (refreshed hourly)
+- Dashboard showing this month's spending: paid so far vs. remaining
+- Stats page with monthly burn, yearly projection, and category breakdown chart
+- Custom expense categories
+- Data export (CSV or JSON)
+- Secure auth — email/password and Google OAuth
+
+## Tech Stack
+
+- **Framework**: Next.js 15 (App Router)
+- **Database & Auth**: Supabase
+- **Styling**: Tailwind CSS v4
+- **Language**: TypeScript
 
 ## Getting Started
 
-First, run the development server:
+### Prerequisites
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+- Node.js 18+
+- A [Supabase](https://supabase.com) project
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+### Setup
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+1. Clone the repo
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+   ```bash
+   git clone https://github.com/ZeeetOne/subtrack.git
+   cd subtrack
+   ```
 
-## Learn More
+2. Install dependencies
 
-To learn more about Next.js, take a look at the following resources:
+   ```bash
+   npm install
+   ```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+3. Create a `.env.local` file in the root with your Supabase credentials
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+   ```
+   NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+   NEXT_PUBLIC_SITE_URL=http://localhost:3000
+   ```
 
-## Deploy on Vercel
+4. Run the database migrations in your Supabase SQL editor — files are in `supabase/migrations/`, run them in order
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+5. Start the dev server
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+   ```bash
+   npm run dev
+   ```
+
+   Open [http://localhost:3000](http://localhost:3000)
+
+## Deployment
+
+Deployed on [Vercel](https://vercel.com). Set the same three env vars in your Vercel project settings, and update the Supabase Auth URL configuration to match your production domain.
