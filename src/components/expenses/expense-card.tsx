@@ -138,7 +138,7 @@ export function ExpenseCard({
 
         {/* Due date */}
         {targetDate && (
-          <div className="hidden sm:flex flex-col items-end flex-shrink-0 min-w-[64px]">
+          <div className="flex flex-col items-end flex-shrink-0 min-w-[64px]">
             <span className="text-[11px] font-bold text-[var(--muted-foreground)] tabular-nums">
               {displayDate ? format(displayDate, 'MMM d') : format(targetDate, 'MMM d')}
             </span>
