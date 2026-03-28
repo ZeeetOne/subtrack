@@ -12,7 +12,7 @@ export const metadata: Metadata = {
     icon: '/favicon.svg',
     apple: '/logo.png',
   },
-  manifest: '/manifest',
+  manifest: '/manifest.webmanifest',
   themeColor: '#1c3210',
   openGraph: {
     title: "SubTrack — Track Your Subscriptions",
