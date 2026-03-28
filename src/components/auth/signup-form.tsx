@@ -1,13 +1,15 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { signupSchema, type SignupFormValues } from '@/lib/schemas/auth'
 import { signup, signInWithGoogle } from '@/lib/actions/auth'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardFooter } from '@/components/ui/card'
+import { PasswordInput } from '@/components/ui/password-input'
 import Link from 'next/link'
 
 export function SignupForm() {
@@ -35,6 +37,9 @@ export function SignupForm() {
   return (
     <div className="w-full max-w-md font-sans">
       <div className="text-center mb-10">
+        <div className="flex justify-center mb-6">
+          <Image src="/logo.png" alt="SubTrack Logo" width={64} height={64} className="rounded-2xl shadow-xl shadow-[var(--primary)]/10" />
+        </div>
         <h1 className="text-4xl font-heading font-semibold text-[var(--foreground)] tracking-tight mb-3">Create Account</h1>
         <p className="text-[var(--muted-foreground)] font-medium">Join SubTrack to start managing your subscriptions elegantly.</p>
       </div>
@@ -54,7 +59,7 @@ export function SignupForm() {
               <label className="text-xs font-semibold uppercase tracking-widest text-[var(--muted-foreground)] font-heading" htmlFor="password">
                 Password
               </label>
-              <Input id="password" type="password" placeholder="••••••••" className="bg-[var(--background)] border-none h-14 rounded-2xl px-6 font-bold text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]" {...register('password')} />
+              <PasswordInput id="password" placeholder="••••••••" className="bg-[var(--background)] border-none h-14 rounded-2xl px-6 font-bold text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]" {...register('password')} />
               {errors.password && <p className="text-[10px] font-semibold uppercase text-[var(--destructive)] mt-1 ml-1">{errors.password.message}</p>}
             </div>
 
@@ -62,7 +67,7 @@ export function SignupForm() {
               <label className="text-xs font-semibold uppercase tracking-widest text-[var(--muted-foreground)] font-heading" htmlFor="confirmPassword">
                 Confirm Password
               </label>
-              <Input id="confirmPassword" type="password" placeholder="••••••••" className="bg-[var(--background)] border-none h-14 rounded-2xl px-6 font-bold text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]" {...register('confirmPassword')} />
+              <PasswordInput id="confirmPassword" placeholder="••••••••" className="bg-[var(--background)] border-none h-14 rounded-2xl px-6 font-bold text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]" {...register('confirmPassword')} />
               {errors.confirmPassword && <p className="text-[10px] font-semibold uppercase text-[var(--destructive)] mt-1 ml-1">{errors.confirmPassword.message}</p>}
             </div>
 

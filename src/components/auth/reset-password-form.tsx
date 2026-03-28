@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { resetPasswordSchema, type ResetPasswordValues } from '@/lib/schemas/auth'
@@ -34,6 +35,9 @@ export function ResetPasswordForm() {
   return (
     <div className="w-full max-w-md font-sans">
       <div className="text-center mb-10">
+        <div className="flex justify-center mb-6">
+          <Image src="/logo.png" alt="SubTrack Logo" width={64} height={64} className="rounded-2xl shadow-xl shadow-[var(--primary)]/10" />
+        </div>
         <h1 className="text-4xl font-heading font-bold text-[var(--foreground)] tracking-tight mb-3">Set New Password</h1>
         <p className="text-[var(--muted-foreground)] font-medium text-sm">Choose a new password for your account.</p>
       </div>

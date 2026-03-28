@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import Image from 'next/image'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { forgotPasswordSchema, type ForgotPasswordValues } from '@/lib/schemas/auth'
@@ -32,6 +33,9 @@ export function ForgotPasswordForm() {
   if (submitted) {
     return (
       <div className="w-full max-w-md font-sans text-center">
+        <div className="flex justify-center mb-6">
+          <Image src="/logo.png" alt="SubTrack Logo" width={64} height={64} className="rounded-2xl shadow-xl shadow-[var(--primary)]/10" />
+        </div>
         <div className="w-14 h-14 rounded-2xl bg-[var(--accent)] flex items-center justify-center mx-auto mb-6">
           <span className="text-2xl">📬</span>
         </div>
@@ -49,6 +53,9 @@ export function ForgotPasswordForm() {
   return (
     <div className="w-full max-w-md font-sans">
       <div className="text-center mb-10">
+        <div className="flex justify-center mb-6">
+          <Image src="/logo.png" alt="SubTrack Logo" width={64} height={64} className="rounded-2xl shadow-xl shadow-[var(--primary)]/10" />
+        </div>
         <h1 className="text-4xl font-heading font-bold text-[var(--foreground)] tracking-tight mb-3">Forgot Password</h1>
         <p className="text-[var(--muted-foreground)] font-medium text-sm">Enter your email and we'll send a reset link.</p>
       </div>

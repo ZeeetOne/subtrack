@@ -5,8 +5,23 @@ import "./globals.css";
 import { Toaster } from 'sonner'
 
 export const metadata: Metadata = {
-  title: "SubTrack - Track your subscriptions",
-  description: "Simple SaaS to track personal subscriptions and expenses.",
+  title: "SubTrack — Track Your Subscriptions",
+  description: "See exactly what you're paying for, when you're paying for it, and how much it costs — all in one place.",
+  icons: {
+    icon: '/favicon.svg',
+  },
+  openGraph: {
+    title: "SubTrack — Track Your Subscriptions",
+    description: "See exactly what you're paying for, when you're paying for it, and how much it costs — all in one place.",
+    url: "https://subtrack-ten-azure.vercel.app",
+    siteName: "SubTrack",
+    type: "website",
+  },
+  twitter: {
+    card: "summary",
+    title: "SubTrack — Track Your Subscriptions",
+    description: "See exactly what you're paying for, when you're paying for it, and how much it costs — all in one place.",
+  },
 };
 
 export default function RootLayout({

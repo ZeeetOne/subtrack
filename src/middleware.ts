@@ -35,7 +35,7 @@ export async function updateSession(request: NextRequest) {
   return supabaseResponse
 }
 
-const PUBLIC_PATHS = ['/login', '/signup', '/forgot-password', '/reset-password', '/auth']
+const PUBLIC_PATHS = ['/', '/login', '/signup', '/forgot-password', '/reset-password', '/auth']
 
 export async function middleware(request: NextRequest) {
   const response = await updateSession(request)
