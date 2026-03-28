@@ -73,7 +73,7 @@ export default async function DashboardPage() {
       baseCurrency, 
       now.getFullYear(), 
       now.getMonth(),
-      e.currentRate
+      e.currentRate ?? undefined
     )
     occurrences.forEach(occ => {
       allOccurrencesInMonth.push({
