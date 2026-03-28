@@ -22,8 +22,8 @@ export async function updateProfile(data: ProfileFormValues) {
 
   const { error } = await supabase
     .from('profiles')
-    .update({ 
-      ...(data.display_name && { display_name: data.display_name }),
+    .update({
+      display_name: data.display_name ?? null,
       ...(data.base_currency && { base_currency: data.base_currency }),
     })
     .eq('id', user.id)

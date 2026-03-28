@@ -30,8 +30,10 @@ self.addEventListener('fetch', (event) => {
   const { request } = event
   const url = new URL(request.url)
 
-  // Never cache: API routes, auth routes, Supabase requests
+  // Never cache: authenticated app pages, API routes, auth routes, Supabase requests
+  const PROTECTED = ['/dashboard', '/expenses', '/stats', '/more']
   if (
+    PROTECTED.some(p => url.pathname.startsWith(p)) ||
     url.pathname.startsWith('/api/') ||
     url.pathname.startsWith('/auth/') ||
     url.hostname.includes('supabase.co') ||

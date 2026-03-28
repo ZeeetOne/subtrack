@@ -30,8 +30,8 @@ export function SignupForm() {
     const result = await signup(data)
     if (result?.error) {
       setError(result.error)
-      setIsLoading(false)
     }
+    setIsLoading(false)
   }
 
   return (
