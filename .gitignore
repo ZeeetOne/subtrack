@@ -36,6 +36,16 @@ yarn-error.log*
 # vercel
 .vercel
 
+# Claude Code / dev tooling
+.playwright-mcp/
+CLAUDE.md
+AGENTS.md
+
+# reference screenshots (root level only)
+/*.png
+/*.jpg
+/*.jpeg
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
