@@ -9,7 +9,10 @@ export const metadata: Metadata = {
   description: "See exactly what you're paying for, when you're paying for it, and how much it costs — all in one place.",
   icons: {
     icon: '/favicon.svg',
+    apple: '/logo.png',
   },
+  manifest: '/manifest.json',
+  themeColor: '#1c3210',
   openGraph: {
     title: "SubTrack — Track Your Subscriptions",
     description: "See exactly what you're paying for, when you're paying for it, and how much it costs — all in one place.",
