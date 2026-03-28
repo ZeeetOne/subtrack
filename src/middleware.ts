@@ -32,6 +32,12 @@ export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
   const isPublic = PUBLIC_PATHS.some(p => pathname === p || pathname.startsWith(p + '/'))
 
+  // Already logged in — skip landing/auth pages and go straight to dashboard
+  const AUTH_PAGES = ['/', '/login', '/signup', '/forgot-password', '/reset-password']
+  if (user && AUTH_PAGES.some(p => pathname === p)) {
+    return NextResponse.redirect(new URL('/dashboard', request.url))
+  }
+
   if (!isPublic && !user) {
     const loginUrl = new URL('/login', request.url)
     loginUrl.searchParams.set('next', pathname)

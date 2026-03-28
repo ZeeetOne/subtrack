@@ -3,6 +3,7 @@ import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { Toaster } from 'sonner'
+import { ServiceWorkerRegistrar } from '@/components/ui/service-worker'
 
 export const metadata: Metadata = {
   title: "SubTrack — Track Your Subscriptions",
@@ -11,7 +12,7 @@ export const metadata: Metadata = {
     icon: '/favicon.svg',
     apple: '/logo.png',
   },
-  manifest: '/manifest.json',
+  manifest: '/manifest',
   themeColor: '#1c3210',
   openGraph: {
     title: "SubTrack — Track Your Subscriptions",
@@ -39,6 +40,7 @@ export default function RootLayout({
       >
         {children}
         <Toaster position="top-center" richColors />
+        <ServiceWorkerRegistrar />
       </body>
     </html>
   );
