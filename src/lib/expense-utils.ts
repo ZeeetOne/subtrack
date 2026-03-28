@@ -58,22 +58,22 @@ export function getOccurrencesInMonth(
   // Recurring logic:
   // Move backwards from next_billing_date until we are before targetMonthStart
   let current = nextBillingDate
-  const stepBack = (d: Date) => {
+  const stepBack = (d: Date): Date | null => {
     switch (expense.billing_cycle) {
       case 'weekly': return subWeeks(d, 1)
       case 'monthly': return subMonths(d, 1)
       case 'quarterly': return subMonths(d, 3)
       case 'yearly': return subYears(d, 1)
-      default: return d
+      default: return null
     }
   }
-  const stepForward = (d: Date) => {
+  const stepForward = (d: Date): Date | null => {
     switch (expense.billing_cycle) {
       case 'weekly': return addWeeks(d, 1)
       case 'monthly': return addMonths(d, 1)
       case 'quarterly': return addMonths(d, 3)
       case 'yearly': return addYears(d, 1)
-      default: return d
+      default: return null
     }
   }
 
@@ -81,17 +81,17 @@ export function getOccurrencesInMonth(
   while (current >= targetMonthStart) {
     addIfInMonth(current)
     const prev = stepBack(current)
-    if (prev === current) break
+    if (!prev) break
     current = prev
   }
 
   // Also move forward from nextBillingDate in case next_billing_date is in the past
   // but we want to see occurrences in the current/future month
-  current = stepForward(nextBillingDate)
+  current = stepForward(nextBillingDate) ?? nextBillingDate
   while (current <= targetMonthEnd) {
     addIfInMonth(current)
     const next = stepForward(current)
-    if (next === current) break
+    if (!next) break
     current = next
   }
 

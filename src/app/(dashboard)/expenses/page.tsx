@@ -34,6 +34,7 @@ export default async function ExpensesPage() {
   const { data: expenses } = await supabase
     .from('expenses')
     .select('*')
+    .eq('user_id', user.id)
     .order('created_at', { ascending: false })
 
   const allExpenses = expenses || []

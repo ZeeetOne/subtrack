@@ -12,11 +12,10 @@ export const expenseSchema = z.object({
   notes: z.string().max(500, "Notes must be under 500 characters").optional(),
   next_billing_date: z.string().optional().refine((val) => {
     if (!val) return true;
-    if (isNaN(Date.parse(val))) return false;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const selectedDate = new Date(val);
-    selectedDate.setHours(0, 0, 0, 0);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) return false;
+    const [y, m, d] = val.split('-').map(Number);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const selectedDate = new Date(y, m - 1, d);
     return selectedDate >= today;
   }, {
     message: "Date cannot be in the past",
