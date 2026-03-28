@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { updateEmail, updatePassword } from '@/lib/actions/profile'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { PasswordInput } from '@/components/ui/password-input'
 import { toast } from 'sonner'
 
 interface SecurityInitialData {
@@ -84,8 +85,7 @@ export function SecurityForm({ initialData }: { initialData: SecurityInitialData
         <CardContent className="p-8 pt-0 space-y-4">
           <div>
             <label className={labelClass}>Current Password</label>
-            <Input
-              type="password"
+            <PasswordInput
               value={currentPassword}
               onChange={(e) => setCurrentPassword(e.target.value)}
               placeholder="••••••••"
@@ -94,8 +94,7 @@ export function SecurityForm({ initialData }: { initialData: SecurityInitialData
           </div>
           <div>
             <label className={labelClass}>New Password</label>
-            <Input
-              type="password"
+            <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="••••••••"
@@ -104,8 +103,7 @@ export function SecurityForm({ initialData }: { initialData: SecurityInitialData
           </div>
           <div>
             <label className={labelClass}>Confirm New Password</label>
-            <Input
-              type="password"
+            <PasswordInput
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               placeholder="••••••••"

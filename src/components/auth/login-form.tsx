@@ -1,13 +1,15 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Image from 'next/image'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { loginSchema, type LoginFormValues } from '@/lib/schemas/auth'
 import { login, signInWithGoogle } from '@/lib/actions/auth'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardFooter } from '@/components/ui/card'
+import { PasswordInput } from '@/components/ui/password-input'
+import { Input } from '@/components/ui/input'
 import Link from 'next/link'
 
 const MAX_ATTEMPTS = 5
@@ -104,6 +106,9 @@ export function LoginForm() {
   return (
     <div className="w-full max-w-md font-sans">
       <div className="text-center mb-10">
+        <div className="flex justify-center mb-6">
+          <Image src="/logo.png" alt="SubTrack Logo" width={64} height={64} className="rounded-2xl shadow-xl shadow-[var(--primary)]/10" />
+        </div>
         <h1 className="text-4xl font-heading font-semibold text-[var(--foreground)] tracking-tight mb-3">Welcome Back</h1>
         <p className="text-[var(--muted-foreground)] font-medium">Log in to SubTrack to manage your budget.</p>
       </div>
@@ -126,7 +131,7 @@ export function LoginForm() {
                 </label>
                 <Link href="/forgot-password" className="text-[10px] font-semibold uppercase tracking-widest text-[var(--primary)] hover:opacity-70">Forgot?</Link>
               </div>
-              <Input id="password" type="password" placeholder="••••••••" className="bg-[var(--background)] border-none h-14 rounded-2xl px-6 font-bold text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]" {...register('password')} />
+              <PasswordInput id="password" placeholder="••••••••" className="bg-[var(--background)] border-none h-14 rounded-2xl px-6 font-bold text-[var(--foreground)] focus-visible:ring-2 focus-visible:ring-[var(--primary)]" {...register('password')} />
               {errors.password && <p className="text-[10px] font-semibold uppercase text-[var(--destructive)] mt-1 ml-1">{errors.password.message}</p>}
             </div>
 

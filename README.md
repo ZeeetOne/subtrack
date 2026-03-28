@@ -4,6 +4,7 @@ A personal subscription expense tracker. See exactly what you're paying for, whe
 
 ## Features
 
+- Landing page with app overview
 - Track subscriptions across any billing cycle — weekly, monthly, quarterly, yearly, or one-time
 - Multi-currency support with live exchange rates (refreshed hourly)
 - Dashboard showing this month's spending: paid so far vs. remaining
@@ -11,6 +12,7 @@ A personal subscription expense tracker. See exactly what you're paying for, whe
 - Custom expense categories
 - Data export (CSV or JSON)
 - Secure auth — email/password and Google OAuth
+- Password show/hide toggle on all auth forms
 
 ## Tech Stack
 

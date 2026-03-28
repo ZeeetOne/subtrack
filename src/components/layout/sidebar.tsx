@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import Image from 'next/image'
 import { usePathname } from 'next/navigation'
 import { LayoutDashboard, CreditCard, BarChart2, Settings2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -18,7 +19,8 @@ export function Sidebar() {
   return (
     <aside className="hidden md:flex flex-col w-56 bg-[var(--card)] border-r border-[var(--border)] h-screen sticky top-0 py-7 font-sans">
       {/* Logo */}
-      <div className="mb-8 px-5">
+      <div className="mb-8 px-5 flex items-center gap-2.5">
+        <Image src="/logo.png" alt="SubTrack Logo" width={24} height={24} className="rounded-md" />
         <span className="text-[15px] font-heading font-bold text-[var(--foreground)] tracking-tight">SubTrack</span>
       </div>
 
