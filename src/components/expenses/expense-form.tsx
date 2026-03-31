@@ -195,7 +195,6 @@ export function ExpenseForm({ onSuccess, onCancel, initialData }: ExpenseFormPro
                       : "bg-transparent text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]"
                   )}
                 >
-                  {cat.icon && <span className="mr-1">{cat.icon}</span>}
                   {cat.name}
                 </button>
               )

@@ -20,7 +20,6 @@ interface Category {
 export function CategoryManager() {
   const [categories, setCategories] = useState<Category[]>([])
   const [newCategory, setNewCategory] = useState('')
-  const [newIcon, setNewIcon] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
@@ -37,13 +36,12 @@ export function CategoryManager() {
   async function handleAddCategory() {
     if (!newCategory.trim()) return
     setIsLoading(true)
-    const result = await createCategory({ name: newCategory.trim(), icon: newIcon.trim() || undefined })
+    const result = await createCategory({ name: newCategory.trim() })
     if (result.error) {
       toast.error(result.error)
     } else {
       toast.success('Category added!')
       setNewCategory('')
-      setNewIcon('')
       loadCategories()
     }
     setIsLoading(false)
@@ -70,13 +68,6 @@ export function CategoryManager() {
       <CardContent className="p-8 pt-0 space-y-6">
         <div className="flex gap-2">
           <Input
-            value={newIcon}
-            onChange={(e) => setNewIcon(e.target.value)}
-            placeholder="🏷️"
-            maxLength={2}
-            className="h-11 w-14 rounded-xl border border-[var(--border)] bg-white px-3 text-lg text-center focus-visible:ring-1 focus-visible:ring-[var(--primary)] focus-visible:ring-offset-0 shrink-0"
-          />
-          <Input
             value={newCategory}
             onChange={(e) => setNewCategory(e.target.value)}
             placeholder="New category name…"
@@ -86,7 +77,7 @@ export function CategoryManager() {
           <Button
             onClick={handleAddCategory}
             disabled={isLoading || !newCategory.trim()}
-            className="h-11 w-11 rounded-xl bg-[var(--primary)] text-white p-0 flex items-center justify-center shrink-0"
+            className="h-11 w-11 rounded-xl bg-[var(--primary)] text-white p-0 flex items-center justify-center"
           >
             <Plus className="w-5 h-5" />
           </Button>
@@ -100,10 +91,10 @@ export function CategoryManager() {
             >
               <div className="flex items-center">
                 <div
-                  className="w-8 h-8 rounded-lg flex items-center justify-center mr-3 text-base"
+                  className="w-8 h-8 rounded-lg flex items-center justify-center mr-3"
                   style={{ backgroundColor: cat.color || 'var(--primary-container)', color: 'white' }}
                 >
-                  {cat.icon ? cat.icon : <Tag className="w-4 h-4" />}
+                  <Tag className="w-4 h-4" />
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-[var(--foreground)]">{cat.name}</p>
