@@ -41,6 +41,11 @@ yarn-error.log*
 CLAUDE.md
 AGENTS.md
 
+# private schema — new migrations and design specs stay out of the public repo
+# (previously committed migrations remain tracked; gitignore only affects untracked files)
+supabase/migrations/*
+docs/superpowers/
+
 # reference screenshots (root level only)
 /*.png
 /*.jpg
