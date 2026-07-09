@@ -1,0 +1,35 @@
+import { z } from "zod";
+
+const dateNotFuture = (val: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) return false;
+  const [y, m, d] = val.split('-').map(Number);
+  const today = new Date(); today.setHours(23, 59, 59, 999);
+  return new Date(y, m - 1, d) <= today;
+};
+
+const amountString = z.string().refine((val) => !isNaN(Number(val)) && Number(val) > 0, {
+  message: "Amount must be a positive number",
+});
+
+export const spendEntrySchema = z.object({
+  name: z.string().min(1, { message: "Name is required" }),
+  amount: amountString,
+  currency: z.string().min(1, { message: "Currency is required" }),
+  spent_on: z.string().refine(dateNotFuture, { message: "Date cannot be in the future" }),
+  category_id: z.string().uuid().optional(),
+  notes: z.string().max(500, "Notes must be under 500 characters").optional(),
+  is_subscription: z.boolean(),
+  cycle: z.enum(["weekly", "monthly", "quarterly", "yearly"]).optional(),
+}).refine((data) => !data.is_subscription || !!data.cycle, {
+  message: "Pick a billing cycle for the subscription",
+  path: ["cycle"],
+});
+
+export type SpendEntryFormValues = z.infer<typeof spendEntrySchema>;
+
+export const confirmPaymentSchema = z.object({
+  paid_date: z.string().refine(dateNotFuture, { message: "Date cannot be in the future" }),
+  amount: amountString,
+});
+
+export type ConfirmPaymentValues = z.infer<typeof confirmPaymentSchema>;
