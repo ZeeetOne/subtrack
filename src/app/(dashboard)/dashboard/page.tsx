@@ -5,8 +5,9 @@ import { TrendingUp, Calendar, History, LayoutDashboard } from 'lucide-react'
 import { batchGetExchangeRates } from '@/lib/currency'
 import { startOfMonth, endOfMonth } from 'date-fns'
 import { ExpenseCard } from '@/components/expenses/expense-card'
-import { getOccurrencesInMonth } from '@/lib/expense-utils'
-import type { Expense, ProcessedExpense, ExpenseOccurrenceWithExpense } from '@/lib/types'
+import { PaymentConfirmCard } from '@/components/expenses/payment-confirm-card'
+import { getOccurrencesInMonth, parseLocalDate, toLocalDateString } from '@/lib/expense-utils'
+import type { Expense, ExpensePayment, ProcessedExpense, ExpenseOccurrenceWithExpense } from '@/lib/types'
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -35,7 +36,8 @@ export default async function DashboardPage() {
     .eq('user_id', user.id)
     .eq('is_active', true)
 
-  const activeExpenses = expenses || []
+  // Lapsed expenses (stopped for now) are excluded from all dashboard math
+  const activeExpenses = ((expenses || []) as Expense[]).filter(e => e.status !== 'lapsed')
 
   // Batch-fetch all needed exchange rates in one pass (one call per unique currency)
   const uniqueCurrencies = [...new Set((activeExpenses as Expense[]).map(e => e.currency))]
@@ -65,17 +67,41 @@ export default async function DashboardPage() {
   const monthStart = startOfMonth(now)
   const monthEnd = endOfMonth(now)
 
+  // Confirmed payments this month (manual-renewal expenses only)
+  const { data: paymentsData } = await supabase
+    .from('expense_payments')
+    .select('*, expenses(*)')
+    .eq('user_id', user.id)
+    .eq('status', 'paid')
+    .gte('paid_date', toLocalDateString(monthStart))
+    .lte('paid_date', toLocalDateString(monthEnd))
+
+  const monthPayments = (paymentsData || []) as (ExpensePayment & { expenses: Expense | null })[]
+
+  const isManual = (e: Expense) => e.renewal_type === 'manual' && e.billing_cycle !== 'one-time'
+
+  // Manual expenses whose due date has arrived: wait for the user, never auto-count
+  const needsConfirmation = processedExpenses.filter(e =>
+    isManual(e) && e.next_billing_date && parseLocalDate(e.next_billing_date) <= today
+  )
+
   // Calculate current month's specific occurrences
   const allOccurrencesInMonth: ExpenseOccurrenceWithExpense[] = []
   processedExpenses.forEach(e => {
     const occurrences = getOccurrencesInMonth(
-      e, 
-      baseCurrency, 
-      now.getFullYear(), 
+      e,
+      baseCurrency,
+      now.getFullYear(),
       now.getMonth(),
       e.currentRate ?? undefined
     )
     occurrences.forEach(occ => {
+      // Manual expenses: the payment log is the source of truth for the past,
+      // and the due occurrence is handled by the confirmation flow — only
+      // project genuinely future occurrences.
+      if (isManual(e)) {
+        if (occ.date <= today) return
+      }
       allOccurrencesInMonth.push({
         ...e,
         occurrenceDate: occ.date,
@@ -84,13 +110,28 @@ export default async function DashboardPage() {
     })
   })
 
+  // Confirmed manual payments become "past" entries at their real paid date/amount
+  const paidManualBills: ExpenseOccurrenceWithExpense[] = monthPayments
+    .filter(p => p.expenses && p.paid_date)
+    .map(p => {
+      const base = processExpense(p.expenses as Expense)
+      return {
+        ...base,
+        occurrenceDate: parseLocalDate(p.paid_date as string),
+        occurrenceAmountInBase: Number(p.amount) * Number(p.exchange_rate),
+      }
+    })
+
   // Split current month occurrences into Past and Upcoming
-  const pastMonthBills = allOccurrencesInMonth.filter(occ => occ.occurrenceDate < today)
+  const pastMonthBills = [
+    ...allOccurrencesInMonth.filter(occ => occ.occurrenceDate < today),
+    ...paidManualBills,
+  ]
   const upcomingMonthBills = allOccurrencesInMonth.filter(occ => occ.occurrenceDate >= today)
 
   // Future bills (beyond this month)
-  const parseLocalDate = (s: string) => { const [y, m, d] = s.split('-').map(Number); return new Date(y, m - 1, d) }
   const futureBills = processedExpenses.filter(e => {
+    if (needsConfirmation.some(n => n.id === e.id)) return false
     if (!e.next_billing_date) return true // Show unscheduled
     return parseLocalDate(e.next_billing_date) > monthEnd
   })
@@ -108,9 +149,12 @@ export default async function DashboardPage() {
     
   const totalYearlyRecurringBurn = totalMonthlyRecurringBurn * 12
   
-  // Real Outflow components for this month
+  // Real Outflow components for this month.
+  // Due-but-unconfirmed manual renewals count as expected (remaining), never as paid.
   const totalPaidSoFar = pastMonthBills.reduce((acc, occ) => acc + occ.occurrenceAmountInBase, 0)
-  const totalRemainingToPay = upcomingMonthBills.reduce((acc, occ) => acc + occ.occurrenceAmountInBase, 0)
+  const totalAwaitingConfirmation = needsConfirmation.reduce((acc, e) => acc + e.amountInBase, 0)
+  const totalRemainingToPay =
+    upcomingMonthBills.reduce((acc, occ) => acc + occ.occurrenceAmountInBase, 0) + totalAwaitingConfirmation
   const totalActualMonthOutflow = totalPaidSoFar + totalRemainingToPay
 
   const paidPercent = totalActualMonthOutflow > 0
@@ -240,6 +284,37 @@ export default async function DashboardPage() {
       </div>
 
       <div className="space-y-12">
+        {/* Needs confirmation */}
+        {needsConfirmation.length > 0 && (
+          <div className="space-y-6">
+            <div className="flex items-center justify-between px-1">
+              <div className="flex items-center space-x-2">
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-[var(--tertiary)] opacity-60" />
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-[var(--tertiary)]" />
+                </span>
+                <h2 className="text-2xl font-heading font-bold text-[var(--foreground)]">Needs confirmation</h2>
+              </div>
+              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest bg-[var(--muted)] px-3 py-1 rounded-full">
+                {needsConfirmation.length} due
+              </span>
+            </div>
+            <p className="text-sm text-[var(--muted-foreground)] font-medium px-1 -mt-3">
+              Did these renew? They stay out of your paid total until you confirm.
+            </p>
+            <div className="space-y-4">
+              {needsConfirmation.map(e => (
+                <PaymentConfirmCard
+                  key={e.id}
+                  expense={e}
+                  convertedAmount={e.amountInBase}
+                  baseCurrency={baseCurrency}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Current Month: Upcoming */}
         <div className="space-y-6">
           <div className="flex items-center justify-between px-1">

@@ -2,11 +2,17 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import { batchGetExchangeRates } from '@/lib/currency'
 import { AnalyticsCharts } from '@/components/dashboard/analytics-charts'
+import { SpendingHeatmap, type HeatmapDay } from '@/components/dashboard/spending-heatmap'
 import { TrendingUp, Calendar, Layers, Award } from 'lucide-react'
 import { InfoButton } from '@/components/ui/info-button'
-import type { Expense, ProcessedExpense } from '@/lib/types'
+import { getOccurrencesInMonth, toLocalDateString } from '@/lib/expense-utils'
+import type { Expense, ExpensePayment, ProcessedExpense } from '@/lib/types'
 
-export default async function StatsPage() {
+export default async function StatsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ hm?: string }>
+}) {
   const supabase = await createClient()
 
   const {
@@ -31,7 +37,21 @@ export default async function StatsPage() {
     .eq('user_id', user.id)
     .eq('is_active', true)
 
-  const activeExpenses = expenses || []
+  // Lapsed expenses are excluded from burn metrics and projections
+  const activeExpenses = ((expenses || []) as Expense[]).filter(e => e.status !== 'lapsed')
+
+  // Heatmap month: ?hm=YYYY-MM, defaults to the current month
+  const { hm } = await searchParams
+  const now = new Date()
+  let hmYear = now.getFullYear()
+  let hmMonth = now.getMonth()
+  if (hm && /^\d{4}-\d{2}$/.test(hm)) {
+    const [y, m] = hm.split('-').map(Number)
+    if (m >= 1 && m <= 12) {
+      hmYear = y
+      hmMonth = m - 1
+    }
+  }
 
   const uniqueCurrencies = [...new Set((activeExpenses as Expense[]).map(e => e.currency))]
   const { rates: rateMap, usingSecondary, unavailablePairs } = await batchGetExchangeRates(uniqueCurrencies, baseCurrency)
@@ -75,6 +95,58 @@ export default async function StatsPage() {
     .filter(e => e.billing_cycle !== 'one-time')
     .sort((a, b) => b.monthlyInBase - a.monthlyInBase)
     .slice(0, 5)
+
+  // ── Heatmap data ────────────────────────────────────────────────────────────
+  const hmStart = new Date(hmYear, hmMonth, 1)
+  const hmEnd = new Date(hmYear, hmMonth + 1, 0)
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+
+  // Confirmed payments in the heatmap month (manual expenses' actual history)
+  const { data: hmPaymentsData } = await supabase
+    .from('expense_payments')
+    .select('*, expenses(name)')
+    .eq('user_id', user.id)
+    .eq('status', 'paid')
+    .gte('paid_date', toLocalDateString(hmStart))
+    .lte('paid_date', toLocalDateString(hmEnd))
+
+  const hmPayments = (hmPaymentsData || []) as (ExpensePayment & { expenses: { name: string } | null })[]
+
+  const dayMap = new Map<string, HeatmapDay>()
+  const addToDay = (date: string, name: string, amountInBase: number, kind: 'paid' | 'scheduled') => {
+    const day = dayMap.get(date) ?? { date, total: 0, items: [] }
+    day.total += amountInBase
+    day.items.push({ name, amountInBase, kind })
+    dayMap.set(date, day)
+  }
+
+  // Automatic expenses: projected occurrences. Manual expenses: only future
+  // projections — their past is the payment log, added below.
+  processedExpenses.forEach(e => {
+    if (e.rateUnavailable) return
+    const occurrences = getOccurrencesInMonth(e, baseCurrency, hmYear, hmMonth, e.currentRate ?? undefined)
+    occurrences.forEach(occ => {
+      const isManual = e.renewal_type === 'manual' && e.billing_cycle !== 'one-time'
+      if (isManual && occ.date <= today) return
+      addToDay(
+        toLocalDateString(occ.date),
+        e.name,
+        occ.amountInBase,
+        occ.date > today ? 'scheduled' : 'paid'
+      )
+    })
+  })
+
+  hmPayments.forEach(p => {
+    if (!p.paid_date) return
+    addToDay(p.paid_date, p.expenses?.name ?? 'Payment', Number(p.amount) * Number(p.exchange_rate), 'paid')
+  })
+
+  const heatmapDays = [...dayMap.values()]
+  const monthLabel = hmStart.toLocaleString('default', { month: 'long', year: 'numeric' })
+  const hmParam = (y: number, m: number) => `${y}-${String(m + 1).padStart(2, '0')}`
+  const prevHref = `/stats?hm=${hmParam(hmMonth === 0 ? hmYear - 1 : hmYear, hmMonth === 0 ? 11 : hmMonth - 1)}`
+  const nextHref = `/stats?hm=${hmParam(hmMonth === 11 ? hmYear + 1 : hmYear, hmMonth === 11 ? 0 : hmMonth + 1)}`
 
   const fmt = (amount: number) =>
     new Intl.NumberFormat('en-US', {
@@ -158,6 +230,20 @@ export default async function StatsPage() {
             <p className="text-xs font-medium text-[var(--muted-foreground)] mt-1">if nothing changes</p>
           </div>
         </div>
+      </div>
+
+      {/* Spending Calendar Heatmap */}
+      <div className="mb-8">
+        <SpendingHeatmap
+          monthLabel={monthLabel}
+          year={hmYear}
+          month={hmMonth}
+          days={heatmapDays}
+          baseCurrency={baseCurrency}
+          prevHref={prevHref}
+          nextHref={nextHref}
+          todayStr={toLocalDateString(today)}
+        />
       </div>
 
       {/* Doughnut Chart */}

@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
+import Link from 'next/link'
 import { ExpenseCard } from '@/components/expenses/expense-card'
-
-type BillingCycle = 'monthly' | 'yearly' | 'quarterly' | 'weekly' | 'one-time'
+import type { Expense, BillingCycle } from '@/lib/types'
 
 const cycleOrder: BillingCycle[] = ['monthly', 'yearly', 'quarterly', 'weekly', 'one-time']
 
@@ -22,7 +22,58 @@ const cycleAccent: Record<BillingCycle, string> = {
   'one-time': '#94a3b8',
 }
 
-export default async function ExpensesPage() {
+type GroupMode = 'cycle' | 'category' | 'renewal'
+
+const groupModes: { value: GroupMode; label: string }[] = [
+  { value: 'cycle', label: 'By cycle' },
+  { value: 'category', label: 'By category' },
+  { value: 'renewal', label: 'By renewal' },
+]
+
+interface Section {
+  key: string
+  label: string
+  accent: string
+  expenses: Expense[]
+}
+
+function groupExpenses(expenses: Expense[], mode: GroupMode): Section[] {
+  if (mode === 'category') {
+    const names = [...new Set(expenses.map(e => e.category || 'Uncategorized'))].sort((a, b) =>
+      a === 'Uncategorized' ? 1 : b === 'Uncategorized' ? -1 : a.localeCompare(b)
+    )
+    return names
+      .map(name => ({
+        key: name,
+        label: name,
+        accent: '#6da030',
+        expenses: expenses.filter(e => (e.category || 'Uncategorized') === name),
+      }))
+      .filter(s => s.expenses.length > 0)
+  }
+
+  if (mode === 'renewal') {
+    return [
+      { key: 'automatic', label: 'Automatic', accent: '#1c3210', expenses: expenses.filter(e => e.renewal_type !== 'manual') },
+      { key: 'manual', label: 'Ask me (manual)', accent: '#c89e2a', expenses: expenses.filter(e => e.renewal_type === 'manual') },
+    ].filter(s => s.expenses.length > 0)
+  }
+
+  return cycleOrder
+    .map(cycle => ({
+      key: cycle,
+      label: cycleLabels[cycle],
+      accent: cycleAccent[cycle],
+      expenses: expenses.filter(e => e.billing_cycle === cycle),
+    }))
+    .filter(s => s.expenses.length > 0)
+}
+
+export default async function ExpensesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ group?: string }>
+}) {
   const supabase = await createClient()
 
   const {
@@ -31,23 +82,22 @@ export default async function ExpensesPage() {
 
   if (!user) redirect('/login')
 
+  const { group } = await searchParams
+  const groupMode: GroupMode =
+    group === 'category' || group === 'renewal' ? group : 'cycle'
+
   const { data: expenses } = await supabase
     .from('expenses')
     .select('*')
     .eq('user_id', user.id)
     .order('created_at', { ascending: false })
 
-  const allExpenses = expenses || []
-  const active = allExpenses.filter((e) => e.is_active)
+  const allExpenses = (expenses || []) as Expense[]
+  const active = allExpenses.filter((e) => e.is_active && e.status !== 'lapsed')
+  const lapsed = allExpenses.filter((e) => e.is_active && e.status === 'lapsed')
   const paused = allExpenses.filter((e) => !e.is_active)
 
-  // Group active expenses by billing cycle, preserving cycleOrder
-  const grouped = cycleOrder.reduce<Record<string, typeof allExpenses>>((acc, cycle) => {
-    const group = active.filter((e) => e.billing_cycle === cycle)
-    if (group.length > 0) acc[cycle] = group
-    return acc
-  }, {})
-
+  const sections = groupExpenses(active, groupMode)
   const isEmpty = allExpenses.length === 0
 
   return (
@@ -60,29 +110,52 @@ export default async function ExpensesPage() {
         </p>
       </div>
 
-      {/* Summary strip */}
+      {/* Summary strip + group selector */}
       {!isEmpty && (
-        <div className="flex items-center gap-3 mb-8 px-1 flex-wrap">
-          <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
-            {active.length} active
-          </span>
-          {cycleOrder.map((cycle) => {
-            const count = active.filter((e) => e.billing_cycle === cycle).length
-            if (count === 0) return null
-            return (
-              <span
-                key={cycle}
-                className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest"
-                style={{ color: cycleAccent[cycle] }}
-              >
-                <span
-                  className="w-1.5 h-1.5 rounded-full inline-block"
-                  style={{ backgroundColor: cycleAccent[cycle] }}
-                />
-                {count} {cycleLabels[cycle]}
+        <div className="mb-8 px-1 space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
+              {active.length} active
+            </span>
+            {lapsed.length > 0 && (
+              <span className="text-[11px] font-semibold uppercase tracking-widest text-orange-700">
+                {lapsed.length} lapsed
               </span>
-            )
-          })}
+            )}
+            {cycleOrder.map((cycle) => {
+              const count = active.filter((e) => e.billing_cycle === cycle).length
+              if (count === 0) return null
+              return (
+                <span
+                  key={cycle}
+                  className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest"
+                  style={{ color: cycleAccent[cycle] }}
+                >
+                  <span
+                    className="w-1.5 h-1.5 rounded-full inline-block"
+                    style={{ backgroundColor: cycleAccent[cycle] }}
+                  />
+                  {count} {cycleLabels[cycle]}
+                </span>
+              )
+            })}
+          </div>
+
+          <div className="flex gap-2">
+            {groupModes.map((mode) => (
+              <Link
+                key={mode.value}
+                href={mode.value === 'cycle' ? '/expenses' : `/expenses?group=${mode.value}`}
+                className={
+                  groupMode === mode.value
+                    ? 'px-3.5 py-1.5 rounded-full text-[12px] font-semibold bg-[var(--primary)] text-white border border-[var(--primary)]'
+                    : 'px-3.5 py-1.5 rounded-full text-[12px] font-semibold bg-transparent text-[var(--muted-foreground)] border border-[var(--border)] hover:border-[var(--primary)]/30 hover:text-[var(--foreground)] transition-colors'
+                }
+              >
+                {mode.label}
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 
@@ -98,31 +171,52 @@ export default async function ExpensesPage() {
         </div>
       ) : (
         <div className="space-y-8">
-          {/* Active, grouped by cycle */}
-          {Object.entries(grouped).map(([cycle, group]) => (
-            <section key={cycle}>
+          {/* Active, grouped by selected mode */}
+          {sections.map((section) => (
+            <section key={section.key}>
               {/* Section header */}
               <div className="flex items-center gap-3 mb-3 px-1">
                 <span
                   className="text-[11px] font-semibold uppercase tracking-widest"
-                  style={{ color: cycleAccent[cycle as BillingCycle] }}
+                  style={{ color: section.accent }}
                 >
-                  {cycleLabels[cycle as BillingCycle]}
+                  {section.label}
                 </span>
                 <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
-                  {group.length} {group.length === 1 ? 'subscription' : 'subscriptions'}
+                  {section.expenses.length} {section.expenses.length === 1 ? 'subscription' : 'subscriptions'}
                 </span>
                 <div className="flex-1 h-px bg-[var(--border)] opacity-40" />
               </div>
 
               {/* Rows */}
               <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
-                {group.map((expense) => (
+                {section.expenses.map((expense) => (
                   <ExpenseCard key={expense.id} expense={expense} />
                 ))}
               </div>
             </section>
           ))}
+
+          {/* Lapsed section */}
+          {lapsed.length > 0 && (
+            <section>
+              <div className="flex items-center gap-3 mb-3 px-1">
+                <span className="text-[11px] font-semibold uppercase tracking-widest text-orange-700">
+                  Lapsed
+                </span>
+                <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
+                  stopped for now — resubscribe anytime
+                </span>
+                <div className="flex-1 h-px bg-[var(--border)] opacity-40" />
+              </div>
+
+              <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
+                {lapsed.map((expense) => (
+                  <ExpenseCard key={expense.id} expense={expense} />
+                ))}
+              </div>
+            </section>
+          )}
 
           {/* Paused section */}
           {paused.length > 0 && (

@@ -7,6 +7,7 @@ export const expenseSchema = z.object({
   }),
   currency: z.string().min(1, { message: "Currency is required" }),
   billing_cycle: z.enum(["weekly", "monthly", "quarterly", "yearly", "one-time"]),
+  renewal_type: z.enum(["automatic", "manual"]),
   category: z.string().optional(),
   category_id: z.string().uuid().optional(),
   notes: z.string().max(500, "Notes must be under 500 characters").optional(),

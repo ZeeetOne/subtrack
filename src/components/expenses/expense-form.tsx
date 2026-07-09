@@ -60,12 +60,14 @@ export function ExpenseForm({ onSuccess, onCancel, initialData }: ExpenseFormPro
     defaultValues: initialData || {
       currency: 'IDR',
       billing_cycle: 'monthly',
+      renewal_type: 'automatic',
       is_active: true,
     },
   })
 
   const selectedCategoryId = watch('category_id')
   const selectedBillingCycle = watch('billing_cycle')
+  const selectedRenewalType = watch('renewal_type')
   const isActive = watch('is_active')
 
   useEffect(() => {
@@ -163,6 +165,41 @@ export function ExpenseForm({ onSuccess, onCancel, initialData }: ExpenseFormPro
         </div>
         {errors.billing_cycle && <p className="text-[10px] text-[var(--destructive)] font-medium mt-1">{errors.billing_cycle.message}</p>}
       </div>
+
+      {/* Renewal Type */}
+      {selectedBillingCycle !== 'one-time' && (
+        <div>
+          <label className={labelClass}>Renewal</label>
+          <div className="grid grid-cols-2 gap-2">
+            {([
+              { value: 'automatic', label: 'Automatic', hint: 'Always renews — counted as paid every cycle' },
+              { value: 'manual', label: 'Ask me', hint: 'You confirm (or skip) each renewal' },
+            ] as const).map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setValue('renewal_type', opt.value)}
+                className={cn(
+                  "rounded-xl border px-3.5 py-2.5 text-left transition-all duration-150",
+                  selectedRenewalType === opt.value
+                    ? "border-[var(--primary)] bg-[var(--accent)]"
+                    : "border-[var(--border)] hover:border-[var(--primary)]/30"
+                )}
+              >
+                <span className={cn(
+                  "block text-[12px] font-semibold",
+                  selectedRenewalType === opt.value ? "text-[var(--primary)]" : "text-[var(--foreground)]"
+                )}>
+                  {opt.label}
+                </span>
+                <span className="block text-[10px] text-[var(--muted-foreground)] mt-0.5 leading-snug">
+                  {opt.hint}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Next Billing Date */}
       <div>

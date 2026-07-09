@@ -5,9 +5,32 @@ import {
 } from 'date-fns'
 
 /** Parse a YYYY-MM-DD string as local midnight to avoid UTC timezone shift. */
-function parseLocalDate(dateStr: string): Date {
+export function parseLocalDate(dateStr: string): Date {
   const [year, month, day] = dateStr.split('-').map(Number)
   return new Date(year, month - 1, day)
+}
+
+/** Format a Date as YYYY-MM-DD in local time. */
+export function toLocalDateString(date: Date): string {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
+/** Advance a YYYY-MM-DD date by one billing cycle. Returns null for one-time. */
+export function advanceByCycle(
+  dateStr: string,
+  cycle: 'weekly' | 'monthly' | 'quarterly' | 'yearly' | 'one-time'
+): string | null {
+  const date = parseLocalDate(dateStr)
+  switch (cycle) {
+    case 'weekly':    return toLocalDateString(addWeeks(date, 1))
+    case 'monthly':   return toLocalDateString(addMonths(date, 1))
+    case 'quarterly': return toLocalDateString(addMonths(date, 3))
+    case 'yearly':    return toLocalDateString(addYears(date, 1))
+    case 'one-time':  return null
+  }
 }
 
 export interface ExpenseOccurrence {

@@ -1,8 +1,8 @@
 'use client'
 
 import { useState } from 'react'
-import { Trash2, Edit2, Pause, Play } from 'lucide-react'
-import { deleteExpense, toggleExpenseStatus } from '@/lib/actions/expense'
+import { Trash2, Edit2, Pause, Play, RotateCcw, Loader2 } from 'lucide-react'
+import { deleteExpense, toggleExpenseStatus, resubscribeExpense } from '@/lib/actions/expense'
 import { cn } from '@/lib/utils'
 import { format, differenceInDays } from 'date-fns'
 import { toast } from 'sonner'
@@ -24,6 +24,8 @@ interface ExpenseCardProps {
     amount: number
     currency: string
     billing_cycle: 'weekly' | 'monthly' | 'quarterly' | 'yearly' | 'one-time'
+    renewal_type?: 'automatic' | 'manual'
+    status?: 'active' | 'lapsed'
     next_billing_date: string | null
     is_active: boolean
     category: string | null
@@ -42,8 +44,15 @@ export function ExpenseCard({
   displayDate,
 }: ExpenseCardProps) {
   const [isEditOpen, setIsEditOpen] = useState(false)
+  const [isResubOpen, setIsResubOpen] = useState(false)
+  const [resubDate, setResubDate] = useState(() => {
+    const t = new Date()
+    return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, '0')}-${String(t.getDate()).padStart(2, '0')}`
+  })
+  const [isResubLoading, setIsResubLoading] = useState(false)
 
   const cycle = cycleConfig[expense.billing_cycle]
+  const isLapsed = expense.status === 'lapsed'
 
   const formatCurrency = (amount: number, currency: string) =>
     new Intl.NumberFormat('en-US', {
@@ -79,6 +88,18 @@ export function ExpenseCard({
         },
       },
     })
+  }
+
+  async function onResubscribe() {
+    setIsResubLoading(true)
+    const result = await resubscribeExpense(expense.id, resubDate)
+    setIsResubLoading(false)
+    if (result.success) {
+      toast.success(`${expense.name} resubscribed.`)
+      setIsResubOpen(false)
+    } else {
+      toast.error(result.error || 'Failed to resubscribe.')
+    }
   }
 
   async function onToggle() {
@@ -128,6 +149,16 @@ export function ExpenseCard({
                 Paused
               </span>
             )}
+            {expense.is_active && isLapsed && (
+              <span className="text-[9px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-full bg-orange-50 text-orange-700">
+                Lapsed
+              </span>
+            )}
+            {expense.is_active && !isLapsed && expense.renewal_type === 'manual' && (
+              <span className="text-[9px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-full bg-[var(--accent)] text-[var(--primary)]">
+                Manual
+              </span>
+            )}
           </div>
           {expense.category && (
             <span className="text-[10px] font-bold text-[var(--muted-foreground)] mt-0.5 block">
@@ -142,7 +173,7 @@ export function ExpenseCard({
             <span className="text-[11px] font-bold text-[var(--muted-foreground)] tabular-nums">
               {displayDate ? format(displayDate, 'MMM d') : format(targetDate, 'MMM d')}
             </span>
-            {expense.is_active && dueDays !== null && dueDays >= 0 && dueDays <= 7 && (
+            {expense.is_active && !isLapsed && dueDays !== null && dueDays >= 0 && dueDays <= 7 && (
               <span
                 className={cn(
                   'text-[9px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-full mt-1 whitespace-nowrap',
@@ -174,6 +205,16 @@ export function ExpenseCard({
         {/* Actions */}
         {showActions && (
           <div className="flex items-center gap-0.5 flex-shrink-0 sm:opacity-0 sm:translate-x-1 sm:group-hover:opacity-100 sm:group-hover:translate-x-0 transition-all duration-150">
+            {isLapsed && expense.is_active && (
+              <button
+                onClick={() => setIsResubOpen(true)}
+                className="flex items-center gap-1.5 h-8 px-3 rounded-xl text-[11px] font-semibold text-[var(--primary)] bg-[var(--accent)] hover:opacity-80 transition-opacity mr-1"
+                aria-label="Resubscribe"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Resubscribe
+              </button>
+            )}
             <button
               onClick={() => setIsEditOpen(true)}
               className="w-8 h-8 rounded-xl flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--primary)] hover:bg-[var(--accent)] transition-colors"
@@ -206,10 +247,49 @@ export function ExpenseCard({
           initialData={{
             ...expense,
             amount: String(expense.amount),
+            renewal_type: expense.renewal_type || 'automatic',
             category: expense.category || undefined,
             next_billing_date: expense.next_billing_date || undefined,
           }}
         />
+      </Modal>
+
+      <Modal isOpen={isResubOpen} onClose={() => setIsResubOpen(false)} title={`Resubscribe ${expense.name}`}>
+        <div className="space-y-5 font-sans">
+          <p className="text-sm text-[var(--muted-foreground)] font-medium leading-relaxed">
+            When did you subscribe again? The billing cycle restarts from this date, and the payment is added to your history.
+          </p>
+          <div>
+            <label className="block text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)] mb-1.5">
+              Resubscribed on
+            </label>
+            <input
+              type="date"
+              value={resubDate}
+              onChange={(e) => setResubDate(e.target.value)}
+              className="h-11 w-full rounded-xl border border-[var(--border)] bg-white px-4 text-sm font-medium text-[var(--foreground)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]"
+            />
+          </div>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setIsResubOpen(false)}
+              disabled={isResubLoading}
+              className="flex-1 h-11 rounded-xl border border-[var(--border)] text-[13px] font-semibold text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition-colors disabled:opacity-50 cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={onResubscribe}
+              disabled={isResubLoading || !resubDate}
+              className="flex-1 h-11 rounded-xl bg-[var(--primary)] text-white text-[13px] font-semibold hover:opacity-80 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer"
+            >
+              {isResubLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+              Confirm
+            </button>
+          </div>
+        </div>
       </Modal>
     </>
   )
