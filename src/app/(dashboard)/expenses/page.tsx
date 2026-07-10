@@ -1,78 +1,48 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { ExpenseCard } from '@/components/expenses/expense-card'
-import type { Expense, BillingCycle } from '@/lib/types'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { format } from 'date-fns'
+import { EntryRow } from '@/components/spend/entry-row'
+import { SubscriptionCard } from '@/components/spend/subscription-card'
+import { batchGetExchangeRates } from '@/lib/currency'
+import { monthlyEstimate } from '@/lib/spend-utils'
+import { parseLocalDate, toLocalDateString } from '@/lib/expense-utils'
+import { cn } from '@/lib/utils'
+import type { SpendEntry, SpendRule, SpendCategory, ProcessedSpendEntry, SpendRuleStatus } from '@/lib/types'
 
-const cycleOrder: BillingCycle[] = ['monthly', 'yearly', 'quarterly', 'weekly', 'one-time']
+type View = 'all' | 'subscriptions'
 
-const cycleLabels: Record<BillingCycle, string> = {
-  monthly:    'Monthly',
-  yearly:     'Yearly',
-  quarterly:  'Quarterly',
-  weekly:     'Weekly',
-  'one-time': 'One-time',
+type SpendEntryRow = SpendEntry & { spend_categories: { name: string } | null }
+
+interface DaySection {
+  date: string
+  entries: ProcessedSpendEntry[]
+  total: number
 }
 
-const cycleAccent: Record<BillingCycle, string> = {
-  monthly:    '#1c3210',
-  yearly:     '#8b5cf6',
-  quarterly:  '#6da030',
-  weekly:     '#c89e2a',
-  'one-time': '#94a3b8',
-}
-
-type GroupMode = 'cycle' | 'category' | 'renewal'
-
-const groupModes: { value: GroupMode; label: string }[] = [
-  { value: 'cycle', label: 'By cycle' },
-  { value: 'category', label: 'By category' },
-  { value: 'renewal', label: 'By renewal' },
-]
-
-interface Section {
-  key: string
+interface RuleSection {
+  key: SpendRuleStatus
   label: string
   accent: string
-  expenses: Expense[]
+  rules: SpendRule[]
 }
 
-function groupExpenses(expenses: Expense[], mode: GroupMode): Section[] {
-  if (mode === 'category') {
-    const names = [...new Set(expenses.map(e => e.category || 'Uncategorized'))].sort((a, b) =>
-      a === 'Uncategorized' ? 1 : b === 'Uncategorized' ? -1 : a.localeCompare(b)
-    )
-    return names
-      .map(name => ({
-        key: name,
-        label: name,
-        accent: '#6da030',
-        expenses: expenses.filter(e => (e.category || 'Uncategorized') === name),
-      }))
-      .filter(s => s.expenses.length > 0)
-  }
+const ruleStatusOrder: { key: SpendRuleStatus; label: string; accent: string }[] = [
+  { key: 'active', label: 'Active', accent: '#1c3210' },
+  { key: 'paused', label: 'Paused', accent: '#c89e2a' },
+  { key: 'ended', label: 'Ended', accent: '#94a3b8' },
+]
 
-  if (mode === 'renewal') {
-    return [
-      { key: 'automatic', label: 'Automatic', accent: '#1c3210', expenses: expenses.filter(e => e.renewal_type !== 'manual') },
-      { key: 'manual', label: 'Ask me (manual)', accent: '#c89e2a', expenses: expenses.filter(e => e.renewal_type === 'manual') },
-    ].filter(s => s.expenses.length > 0)
-  }
-
-  return cycleOrder
-    .map(cycle => ({
-      key: cycle,
-      label: cycleLabels[cycle],
-      accent: cycleAccent[cycle],
-      expenses: expenses.filter(e => e.billing_cycle === cycle),
-    }))
-    .filter(s => s.expenses.length > 0)
-}
+const pillClass = (active: boolean) =>
+  active
+    ? 'px-3.5 py-1.5 rounded-full text-[12px] font-semibold bg-[var(--primary)] text-white border border-[var(--primary)]'
+    : 'px-3.5 py-1.5 rounded-full text-[12px] font-semibold bg-transparent text-[var(--muted-foreground)] border border-[var(--border)] hover:border-[var(--primary)]/30 hover:text-[var(--foreground)] transition-colors'
 
 export default async function ExpensesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ group?: string }>
+  searchParams: Promise<{ view?: string; month?: string; cat?: string }>
 }) {
   const supabase = await createClient()
 
@@ -82,23 +52,123 @@ export default async function ExpensesPage({
 
   if (!user) redirect('/login')
 
-  const { group } = await searchParams
-  const groupMode: GroupMode =
-    group === 'category' || group === 'renewal' ? group : 'cycle'
+  const { view: viewParam, month: monthParam, cat } = await searchParams
+  const view: View = viewParam === 'subscriptions' ? 'subscriptions' : 'all'
 
-  const { data: expenses } = await supabase
-    .from('expenses')
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('base_currency')
+    .eq('id', user.id)
+    .single()
+  const baseCurrency = profile?.base_currency || 'IDR'
+
+  const { data: categoriesData } = await supabase
+    .from('spend_categories')
     .select('*')
     .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
+    .order('name')
+  const categories = (categoriesData || []) as SpendCategory[]
+  const categoryNameById = new Map(categories.map((c) => [c.id, c.name]))
 
-  const allExpenses = (expenses || []) as Expense[]
-  const active = allExpenses.filter((e) => e.is_active && e.status !== 'lapsed')
-  const lapsed = allExpenses.filter((e) => e.is_active && e.status === 'lapsed')
-  const paused = allExpenses.filter((e) => !e.is_active)
+  // Month window: ?month=YYYY-MM, defaults to the current month
+  const now = new Date()
+  let year = now.getFullYear()
+  let month = now.getMonth() // 0-indexed
+  if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+    const [y, m] = monthParam.split('-').map(Number)
+    if (m >= 1 && m <= 12) {
+      year = y
+      month = m - 1
+    }
+  }
+  const monthStart = toLocalDateString(new Date(year, month, 1))
+  const monthEnd = toLocalDateString(new Date(year, month + 1, 0))
+  const monthLabel = new Date(year, month, 1).toLocaleString('default', { month: 'long', year: 'numeric' })
+  const monthParamStr = (y: number, m: number) => `${y}-${String(m + 1).padStart(2, '0')}`
+  const currentMonthParam = monthParamStr(year, month)
+  const prevHref = `/expenses?month=${monthParamStr(month === 0 ? year - 1 : year, month === 0 ? 11 : month - 1)}`
+  const nextHref = `/expenses?month=${monthParamStr(month === 11 ? year + 1 : year, month === 11 ? 0 : month + 1)}`
 
-  const sections = groupExpenses(active, groupMode)
-  const isEmpty = allExpenses.length === 0
+  let daySections: DaySection[] = []
+
+  if (view === 'all') {
+    let query = supabase
+      .from('spend_entries')
+      .select('*, spend_categories(name)')
+      .eq('user_id', user.id)
+      .gte('spent_on', monthStart)
+      .lte('spent_on', monthEnd)
+      .order('spent_on', { ascending: false })
+      .order('created_at', { ascending: false })
+
+    if (cat) query = query.eq('category_id', cat)
+
+    const { data } = await query
+    const rows = (data || []) as SpendEntryRow[]
+    const entries: ProcessedSpendEntry[] = rows.map((row) => {
+      const { spend_categories, ...entry } = row
+      return {
+        ...entry,
+        categoryName: spend_categories?.name ?? null,
+        amountInBase: Number(entry.amount) * Number(entry.exchange_rate),
+      }
+    })
+
+    const byDate = new Map<string, ProcessedSpendEntry[]>()
+    for (const entry of entries) {
+      const list = byDate.get(entry.spent_on) ?? []
+      list.push(entry)
+      byDate.set(entry.spent_on, list)
+    }
+    daySections = [...byDate.entries()]
+      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+      .map(([date, dayEntries]) => ({
+        date,
+        entries: dayEntries,
+        total: dayEntries.reduce((sum, e) => sum + e.amountInBase, 0),
+      }))
+  }
+
+  let ruleSections: RuleSection[] = []
+  let ruleEstimates = new Map<string, number | null>()
+  let subscriptionsEmpty = false
+
+  if (view === 'subscriptions') {
+    const { data: rulesData } = await supabase
+      .from('spend_rules')
+      .select('*')
+      .eq('user_id', user.id)
+      .order('next_due', { ascending: true })
+    const rules = (rulesData || []) as SpendRule[]
+    subscriptionsEmpty = rules.length === 0
+
+    const uniqueCurrencies = [...new Set(rules.map((r) => r.default_currency))]
+    const { rates } = await batchGetExchangeRates(uniqueCurrencies, baseCurrency)
+
+    for (const rule of rules) {
+      const rate = rates[rule.default_currency]
+      ruleEstimates.set(rule.id, rate == null ? null : monthlyEstimate(rule.default_amount, rule.cycle) * rate)
+    }
+
+    ruleSections = ruleStatusOrder
+      .map(({ key, label, accent }) => ({
+        key,
+        label,
+        accent,
+        rules: rules.filter((r) => r.status === key),
+      }))
+      .filter((s) => s.rules.length > 0)
+  }
+
+  const fmt = (amount: number) =>
+    new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: baseCurrency,
+      minimumFractionDigits: baseCurrency === 'IDR' ? 0 : 2,
+      maximumFractionDigits: baseCurrency === 'IDR' ? 0 : 2,
+    }).format(amount)
+
+  const isAllEmpty = view === 'all' && daySections.length === 0
 
   return (
     <div className="pb-24 font-sans text-[var(--foreground)]">
@@ -106,139 +176,138 @@ export default async function ExpensesPage({
       <div className="mb-8 px-1">
         <h1 className="text-4xl font-heading font-bold tracking-tight">Expenses</h1>
         <p className="text-[var(--muted-foreground)] mt-2 font-medium text-sm">
-          Manage your recurring subscriptions and costs.
+          Track everything you spend.
         </p>
       </div>
 
-      {/* Summary strip + group selector */}
-      {!isEmpty && (
-        <div className="mb-8 px-1 space-y-4">
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
-              {active.length} active
-            </span>
-            {lapsed.length > 0 && (
-              <span className="text-[11px] font-semibold uppercase tracking-widest text-orange-700">
-                {lapsed.length} lapsed
-              </span>
-            )}
-            {cycleOrder.map((cycle) => {
-              const count = active.filter((e) => e.billing_cycle === cycle).length
-              if (count === 0) return null
-              return (
-                <span
-                  key={cycle}
-                  className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-widest"
-                  style={{ color: cycleAccent[cycle] }}
-                >
-                  <span
-                    className="w-1.5 h-1.5 rounded-full inline-block"
-                    style={{ backgroundColor: cycleAccent[cycle] }}
-                  />
-                  {count} {cycleLabels[cycle]}
-                </span>
-              )
-            })}
+      {/* View toggle */}
+      <div className="mb-6 px-1 flex gap-2">
+        <Link href="/expenses" className={pillClass(view === 'all')}>
+          All
+        </Link>
+        <Link href="/expenses?view=subscriptions" className={pillClass(view === 'subscriptions')}>
+          Subscriptions
+        </Link>
+      </div>
+
+      {view === 'all' && (
+        <>
+          {/* Month switcher */}
+          <div className="mb-4 px-1 flex items-center justify-between">
+            <Link
+              href={prevHref}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+              aria-label="Previous month"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </Link>
+            <span className="text-[13px] font-bold text-[var(--foreground)] tabular-nums">{monthLabel}</span>
+            <Link
+              href={nextHref}
+              className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+              aria-label="Next month"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </Link>
           </div>
 
-          <div className="flex gap-2">
-            {groupModes.map((mode) => (
-              <Link
-                key={mode.value}
-                href={mode.value === 'cycle' ? '/expenses' : `/expenses?group=${mode.value}`}
-                className={
-                  groupMode === mode.value
-                    ? 'px-3.5 py-1.5 rounded-full text-[12px] font-semibold bg-[var(--primary)] text-white border border-[var(--primary)]'
-                    : 'px-3.5 py-1.5 rounded-full text-[12px] font-semibold bg-transparent text-[var(--muted-foreground)] border border-[var(--border)] hover:border-[var(--primary)]/30 hover:text-[var(--foreground)] transition-colors'
-                }
-              >
-                {mode.label}
+          {/* Category filter chips */}
+          {categories.length > 0 && (
+            <div className="mb-6 px-1 flex gap-2 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
+              <Link href={`/expenses?month=${currentMonthParam}`} className={cn('flex-none', pillClass(!cat))}>
+                All categories
               </Link>
-            ))}
-          </div>
-        </div>
+              {categories.map((c) => (
+                <Link
+                  key={c.id}
+                  href={`/expenses?month=${currentMonthParam}&cat=${c.id}`}
+                  className={cn('flex-none', pillClass(cat === c.id))}
+                >
+                  {c.name}
+                </Link>
+              ))}
+            </div>
+          )}
+
+          {isAllEmpty ? (
+            <div className="flex flex-col items-center justify-center p-16 text-center bg-[var(--card)] rounded-2xl border border-[var(--border)]">
+              <div className="bg-[var(--background)] p-6 rounded-full mb-6">
+                <span className="text-4xl">💸</span>
+              </div>
+              <p className="text-[var(--foreground)] font-heading font-semibold text-xl mb-2">No expenses yet</p>
+              <p className="text-[var(--muted-foreground)] text-sm max-w-[240px] font-medium">
+                Log your first expense with the plus button.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-6">
+              {daySections.map((section) => (
+                <section key={section.date}>
+                  <div className="flex items-center gap-3 mb-3 px-1">
+                    <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
+                      {format(parseLocalDate(section.date), 'EEEE, MMM d')}
+                    </span>
+                    <div className="flex-1 h-px bg-[var(--border)] opacity-40" />
+                    <span className="text-[11px] font-bold text-[var(--foreground)] tabular-nums">
+                      {fmt(section.total)}
+                    </span>
+                  </div>
+
+                  <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
+                    {section.entries.map((entry) => (
+                      <EntryRow key={entry.id} entry={entry} baseCurrency={baseCurrency} />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
-      {isEmpty ? (
-        <div className="flex flex-col items-center justify-center p-16 text-center bg-[var(--card)] rounded-2xl border border-[var(--border)]">
-          <div className="bg-[var(--background)] p-6 rounded-full mb-6">
-            <span className="text-4xl">💸</span>
+      {view === 'subscriptions' && (
+        subscriptionsEmpty ? (
+          <div className="flex flex-col items-center justify-center p-16 text-center bg-[var(--card)] rounded-2xl border border-[var(--border)]">
+            <div className="bg-[var(--background)] p-6 rounded-full mb-6">
+              <span className="text-4xl">💸</span>
+            </div>
+            <p className="text-[var(--foreground)] font-heading font-semibold text-xl mb-2">No subscriptions yet</p>
+            <p className="text-[var(--muted-foreground)] text-sm max-w-[240px] font-medium">
+              Mark an expense as a subscription when adding it.
+            </p>
           </div>
-          <p className="text-[var(--foreground)] font-heading font-semibold text-xl mb-2">No expenses yet</p>
-          <p className="text-[var(--muted-foreground)] text-sm max-w-[240px] font-medium">
-            Click the plus button below to add your first subscription.
-          </p>
-        </div>
-      ) : (
-        <div className="space-y-8">
-          {/* Active, grouped by selected mode */}
-          {sections.map((section) => (
-            <section key={section.key}>
-              {/* Section header */}
-              <div className="flex items-center gap-3 mb-3 px-1">
-                <span
-                  className="text-[11px] font-semibold uppercase tracking-widest"
-                  style={{ color: section.accent }}
-                >
-                  {section.label}
-                </span>
-                <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
-                  {section.expenses.length} {section.expenses.length === 1 ? 'subscription' : 'subscriptions'}
-                </span>
-                <div className="flex-1 h-px bg-[var(--border)] opacity-40" />
-              </div>
+        ) : (
+          <div className="space-y-8">
+            {ruleSections.map((section) => (
+              <section key={section.key}>
+                <div className="flex items-center gap-3 mb-3 px-1">
+                  <span
+                    className="text-[11px] font-semibold uppercase tracking-widest"
+                    style={{ color: section.accent }}
+                  >
+                    {section.label}
+                  </span>
+                  <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
+                    {section.rules.length} {section.rules.length === 1 ? 'subscription' : 'subscriptions'}
+                  </span>
+                  <div className="flex-1 h-px bg-[var(--border)] opacity-40" />
+                </div>
 
-              {/* Rows */}
-              <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
-                {section.expenses.map((expense) => (
-                  <ExpenseCard key={expense.id} expense={expense} />
-                ))}
-              </div>
-            </section>
-          ))}
-
-          {/* Lapsed section */}
-          {lapsed.length > 0 && (
-            <section>
-              <div className="flex items-center gap-3 mb-3 px-1">
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-orange-700">
-                  Lapsed
-                </span>
-                <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
-                  stopped for now — resubscribe anytime
-                </span>
-                <div className="flex-1 h-px bg-[var(--border)] opacity-40" />
-              </div>
-
-              <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
-                {lapsed.map((expense) => (
-                  <ExpenseCard key={expense.id} expense={expense} />
-                ))}
-              </div>
-            </section>
-          )}
-
-          {/* Paused section */}
-          {paused.length > 0 && (
-            <section>
-              <div className="flex items-center gap-3 mb-3 px-1">
-                <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
-                  Paused
-                </span>
-                <span className="text-[10px] font-bold text-[var(--muted-foreground)]">
-                  {paused.length} {paused.length === 1 ? 'subscription' : 'subscriptions'}
-                </span>
-                <div className="flex-1 h-px bg-[var(--border)] opacity-40" />
-              </div>
-
-              <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
-                {paused.map((expense) => (
-                  <ExpenseCard key={expense.id} expense={expense} />
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
+                <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
+                  {section.rules.map((rule) => (
+                    <SubscriptionCard
+                      key={rule.id}
+                      rule={rule}
+                      categoryName={rule.category_id ? categoryNameById.get(rule.category_id) : null}
+                      monthlyEstimateInBase={ruleEstimates.get(rule.id) ?? null}
+                      baseCurrency={baseCurrency}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )
       )}
     </div>
   )
