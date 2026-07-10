@@ -34,10 +34,10 @@ async function getOwnedRule(supabase: Supabase, id: string, userId: string): Pro
   return data as SpendRule
 }
 
-/** After an entry edit/delete, re-anchor the rule's next_due to its latest remaining payment. */
-async function recomputeRuleNextDue(supabase: Supabase, ruleId: string, userId: string) {
+/** After an entry edit/delete, re-anchor the rule's next_due to its latest remaining payment. Returns error message or null. */
+async function recomputeRuleNextDue(supabase: Supabase, ruleId: string, userId: string): Promise<string | null> {
   const rule = await getOwnedRule(supabase, ruleId, userId)
-  if (!rule) return
+  if (!rule) return null
   const { data } = await supabase
     .from('spend_entries')
     .select('spent_on')
@@ -46,10 +46,12 @@ async function recomputeRuleNextDue(supabase: Supabase, ruleId: string, userId: 
     .limit(1)
   const latest = data?.[0]?.spent_on
   if (latest) {
-    await supabase.from('spend_rules')
+    const { error } = await supabase.from('spend_rules')
       .update({ next_due: advanceCycle(latest, rule.cycle) })
       .match({ id: ruleId, user_id: userId })
+    if (error) return error.message
   }
+  return null
 }
 
 // ---------- categories ----------
@@ -136,7 +138,12 @@ export async function createSpendEntry(data: SpendEntryFormValues) {
     spent_on: v.spent_on,
     rule_id: ruleId,
   })
-  if (error) return { error: error.message }
+  if (error) {
+    if (ruleId) {
+      await supabase.from('spend_rules').delete().match({ id: ruleId, user_id: user.id })
+    }
+    return { error: error.message }
+  }
 
   revalidateAll()
   return { success: true }
@@ -170,7 +177,10 @@ export async function updateSpendEntry(id: string, data: SpendEntryFormValues) {
   }).match({ id, user_id: user.id })
   if (error) return { error: error.message }
 
-  if (existing?.rule_id) await recomputeRuleNextDue(supabase, existing.rule_id, user.id)
+  if (existing?.rule_id) {
+    const recomputeError = await recomputeRuleNextDue(supabase, existing.rule_id, user.id)
+    if (recomputeError) return { error: recomputeError }
+  }
 
   revalidateAll()
   return { success: true }
@@ -184,7 +194,10 @@ export async function deleteSpendEntry(id: string) {
   const { error } = await supabase.from('spend_entries').delete().match({ id, user_id: user.id })
   if (error) return { error: error.message }
 
-  if (existing?.rule_id) await recomputeRuleNextDue(supabase, existing.rule_id, user.id)
+  if (existing?.rule_id) {
+    const recomputeError = await recomputeRuleNextDue(supabase, existing.rule_id, user.id)
+    if (recomputeError) return { error: recomputeError }
+  }
 
   revalidateAll()
   return { success: true }
