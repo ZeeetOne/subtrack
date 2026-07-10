@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
@@ -48,6 +48,7 @@ const labelClass = "block text-[11px] font-semibold uppercase tracking-widest te
 export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [categories, setCategories] = useState<Category[]>([])
+  const submittedRef = useRef(false)
 
   const {
     register,
@@ -104,16 +105,24 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
 
     // Create mode: instant optimistic close — the modal shouldn't wait on the
     // server round-trip. Fire the action in the background and reconcile via toast.
+    if (submittedRef.current) return
+    submittedRef.current = true
     reset()
     onSuccess?.()
     const toastId = toast.loading('Adding…')
-    createSpendEntry(data).then((result) => {
-      if (result.error) {
-        toast.error(result.error, { id: toastId })
-      } else {
-        toast.success('Expense added!', { id: toastId })
-      }
-    })
+    createSpendEntry(data)
+      .then((result) => {
+        if (result.error) {
+          submittedRef.current = false
+          toast.error(result.error, { id: toastId })
+        } else {
+          toast.success('Expense added!', { id: toastId })
+        }
+      })
+      .catch(() => {
+        submittedRef.current = false
+        toast.error('Something went wrong. Please try again.', { id: toastId })
+      })
   }
 
   return (
