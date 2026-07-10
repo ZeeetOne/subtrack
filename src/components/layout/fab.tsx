@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { Plus } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Modal } from '@/components/ui/modal'
-import { ExpenseForm } from '@/components/expenses/expense-form'
+import { EntryForm } from '@/components/spend/entry-form'
 
 export function FAB() {
   const [isOpen, setIsOpen] = useState(false)
@@ -24,7 +24,7 @@ export function FAB() {
         onClose={() => setIsOpen(false)}
         title="Add Expense"
       >
-        <ExpenseForm onSuccess={() => setIsOpen(false)} onCancel={() => setIsOpen(false)} />
+        <EntryForm onSuccess={() => setIsOpen(false)} onCancel={() => setIsOpen(false)} />
       </Modal>
     </>
   )
