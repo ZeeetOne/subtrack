@@ -132,15 +132,13 @@ export function SubscriptionDetail({ rule }: SubscriptionDetailProps) {
 
   return (
     <div className="space-y-3">
-      {rule.status !== 'ended' && (
-        <button
-          type="button"
-          onClick={() => setIsLogOpen(true)}
-          className="w-full h-12 rounded-xl bg-[var(--primary)] text-white text-[13px] font-semibold hover:opacity-80 transition-opacity cursor-pointer"
-        >
-          Log payment
-        </button>
-      )}
+      <button
+        type="button"
+        onClick={() => setIsLogOpen(true)}
+        className="w-full h-12 rounded-xl bg-[var(--primary)] text-white text-[13px] font-semibold hover:opacity-80 transition-opacity cursor-pointer"
+      >
+        {rule.status === 'ended' ? 'Resubscribe' : 'Log payment'}
+      </button>
 
       <div className="grid grid-cols-2 gap-3">
         {rule.status !== 'ended' && (
@@ -201,6 +199,11 @@ export function SubscriptionDetail({ rule }: SubscriptionDetailProps) {
       {/* Log payment modal */}
       <Modal isOpen={isLogOpen} onClose={() => setIsLogOpen(false)} title="Log payment">
         <form onSubmit={handleLogSubmit(onLogPayment)} className="space-y-5">
+          {rule.status === 'ended' && (
+            <p className="text-[12px] font-medium text-[var(--muted-foreground)]">
+              Logging a payment reactivates this subscription.
+            </p>
+          )}
           <div>
             <label className={labelClass}>Date</label>
             <Input
