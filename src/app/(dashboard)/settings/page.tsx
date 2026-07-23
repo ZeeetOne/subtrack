@@ -19,33 +19,32 @@ const menuItems = [
   {
     title: 'Account',
     items: [
-      { name: 'Profile Settings', href: '/more/profile', icon: User, color: 'text-[var(--primary)]', bg: 'bg-[var(--accent)]' },
-      { name: 'Security & Password', href: '/more/security', icon: ShieldCheck, color: 'text-[var(--secondary)]', bg: 'bg-[var(--secondary-container)]' },
-      { name: 'Base Currency', href: '/more/currency', icon: CreditCard, color: 'text-[var(--primary)]', bg: 'bg-[var(--accent)]' },
+      { name: 'Profile Settings', href: '/settings/profile', icon: User, color: 'text-[var(--primary)]', bg: 'bg-[var(--accent)]' },
+      { name: 'Security & Password', href: '/settings/security', icon: ShieldCheck, color: 'text-[var(--secondary)]', bg: 'bg-[var(--secondary-container)]' },
+      { name: 'Base Currency', href: '/settings/currency', icon: CreditCard, color: 'text-[var(--primary)]', bg: 'bg-[var(--accent)]' },
     ]
   },
   {
     title: 'Customization',
     items: [
-      { name: 'Categories', href: '/more/categories', icon: Tag, color: 'text-[var(--tertiary)]', bg: 'bg-[var(--tertiary-container)]/30' },
+      { name: 'Categories', href: '/settings/categories', icon: Tag, color: 'text-[var(--tertiary)]', bg: 'bg-[var(--tertiary-container)]/30' },
     ]
   },
   {
     title: 'Support',
     items: [
-      { name: 'Give Feedback', href: '/more/feedback', icon: MessageSquare, color: 'text-[var(--secondary)]', bg: 'bg-[var(--secondary-container)]' },
+      { name: 'Give Feedback', href: '/settings/feedback', icon: MessageSquare, color: 'text-[var(--secondary)]', bg: 'bg-[var(--secondary-container)]' },
     ]
   },
   {
     title: 'Data',
     items: [
-      { name: 'Export as CSV', href: '/api/export?format=csv', icon: Download, color: 'text-[var(--tertiary)]', bg: 'bg-[var(--tertiary-container)]/30' },
-      { name: 'Export as JSON', href: '/api/export?format=json', icon: Download, color: 'text-[var(--tertiary)]', bg: 'bg-[var(--tertiary-container)]/30' },
+      { name: 'Export as CSV', href: '/api/export', icon: Download, color: 'text-[var(--tertiary)]', bg: 'bg-[var(--tertiary-container)]/30' },
     ]
   }
 ]
 
-export default async function MorePage() {
+export default async function SettingsPage() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 
@@ -60,7 +59,7 @@ export default async function MorePage() {
   return (
     <div className="pb-24 font-sans">
       <div className="mb-10 px-1 text-center sm:text-left">
-        <h1 className="text-4xl font-heading font-bold text-[var(--foreground)] tracking-tight">More</h1>
+        <h1 className="text-4xl font-heading font-bold text-[var(--foreground)] tracking-tight">Settings</h1>
         <p className="text-[var(--muted-foreground)] mt-2 font-medium text-sm">Settings, customization, and support.</p>
       </div>
 

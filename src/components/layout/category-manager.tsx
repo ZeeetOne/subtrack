@@ -1,24 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { getCategories, createCategory, deleteCategory } from '@/lib/actions/expense'
+import { getSpendCategories, createSpendCategory, deleteSpendCategory } from '@/lib/actions/spend'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { Plus, Trash2, Tag } from 'lucide-react'
-import { cn } from '@/lib/utils'
-
-interface Category {
-  id: string
-  name: string
-  icon?: string
-  color?: string
-  user_id?: string
-}
+import type { SpendCategory } from '@/lib/types'
 
 export function CategoryManager() {
-  const [categories, setCategories] = useState<Category[]>([])
+  const [categories, setCategories] = useState<SpendCategory[]>([])
   const [newCategory, setNewCategory] = useState('')
   const [isLoading, setIsLoading] = useState(false)
 
@@ -27,7 +19,7 @@ export function CategoryManager() {
   }, [])
 
   async function loadCategories() {
-    const result = await getCategories()
+    const result = await getSpendCategories()
     if (result.data) {
       setCategories(result.data)
     }
@@ -36,7 +28,7 @@ export function CategoryManager() {
   async function handleAddCategory() {
     if (!newCategory.trim()) return
     setIsLoading(true)
-    const result = await createCategory({ name: newCategory.trim() })
+    const result = await createSpendCategory({ name: newCategory.trim() })
     if (result.error) {
       toast.error(result.error)
     } else {
@@ -48,7 +40,7 @@ export function CategoryManager() {
   }
 
   async function handleDeleteCategory(id: string) {
-    const result = await deleteCategory(id)
+    const result = await deleteSpendCategory(id)
     if (result.error) {
       toast.error(result.error)
     } else {
@@ -92,24 +84,21 @@ export function CategoryManager() {
               <div className="flex items-center">
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center mr-3"
-                  style={{ backgroundColor: cat.color || 'var(--primary-container)', color: 'white' }}
+                  style={{ backgroundColor: 'var(--primary-container)', color: 'white' }}
                 >
                   <Tag className="w-4 h-4" />
                 </div>
                 <div>
                   <p className="text-sm font-semibold text-[var(--foreground)]">{cat.name}</p>
-                  {!cat.user_id && <p className="text-[10px] font-bold text-[var(--muted-foreground)] uppercase tracking-tight">Default</p>}
                 </div>
               </div>
-              
-              {cat.user_id && (
-                <button 
-                  onClick={() => handleDeleteCategory(cat.id)}
-                  className="text-[var(--destructive)] opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-[var(--destructive)]/10 rounded-lg"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              )}
+
+              <button
+                onClick={() => handleDeleteCategory(cat.id)}
+                className="text-[var(--destructive)] opacity-0 group-hover:opacity-100 transition-opacity p-2 hover:bg-[var(--destructive)]/10 rounded-lg"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
             </div>
           ))}
         </div>

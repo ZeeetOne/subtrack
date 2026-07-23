@@ -31,7 +31,7 @@ export async function createCategory(data: { name: string, icon?: string, color?
     .insert({ ...data, user_id: user.id })
 
   if (error) return { error: error.message }
-  revalidatePath('/more')
+  revalidatePath('/settings')
   revalidatePath('/expenses')
   return { success: true }
 }
@@ -47,7 +47,7 @@ export async function updateCategory(id: string, data: { name: string, icon?: st
     .match({ id, user_id: user.id })
 
   if (error) return { error: error.message }
-  revalidatePath('/more')
+  revalidatePath('/settings')
   revalidatePath('/expenses')
   return { success: true }
 }
@@ -63,7 +63,7 @@ export async function deleteCategory(id: string) {
     .match({ id, user_id: user.id })
 
   if (error) return { error: error.message }
-  revalidatePath('/more')
+  revalidatePath('/settings')
   revalidatePath('/expenses')
   return { success: true }
 }

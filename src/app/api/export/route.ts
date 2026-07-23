@@ -1,5 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
+import type { SpendEntry } from '@/lib/types'
+
+type ExportRow = SpendEntry & {
+  spend_categories: { name: string } | null
+  spend_rules: { name: string } | null
+}
+
+function csvEscape(v: string) {
+  return `"${v.replace(/"/g, '""')}"`
+}
 
 export async function GET(request: NextRequest) {
   const supabase = await createClient()
@@ -12,49 +22,51 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  const format = request.nextUrl.searchParams.get('format') ?? 'csv'
-
-  const { data: expenses, error } = await supabase
-    .from('expenses')
-    .select('name, amount, currency, billing_cycle, category, notes, next_billing_date, is_active, created_at')
+  const { data, error } = await supabase
+    .from('spend_entries')
+    .select('*, spend_categories(name), spend_rules(name)')
     .eq('user_id', user.id)
-    .order('created_at', { ascending: false })
+    .order('spent_on', { ascending: true })
 
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 })
   }
 
-  if (format === 'json') {
-    return new NextResponse(JSON.stringify(expenses, null, 2), {
-      headers: {
-        'Content-Type': 'application/json',
-        'Content-Disposition': 'attachment; filename="subtrack-expenses.json"',
-      },
-    })
-  }
+  const rows = (data ?? []) as unknown as ExportRow[]
 
-  // CSV
-  const q = (v: string) => `"${v.replace(/"/g, '""')}"`
+  const headers = [
+    'date',
+    'name',
+    'amount',
+    'currency',
+    'exchange_rate',
+    'amount_in_base',
+    'category',
+    'subscription',
+    'notes',
+  ]
 
-  const headers = ['Name', 'Amount', 'Currency', 'Billing Cycle', 'Category', 'Notes', 'Next Billing Date', 'Active', 'Created At']
-  const rows = (expenses ?? []).map(e => [
-    q(e.name ?? ''),
-    q(String(e.amount ?? '')),
-    q(e.currency ?? ''),
-    q(e.billing_cycle ?? ''),
-    q(e.category ?? ''),
-    q(e.notes ?? ''),
-    q(e.next_billing_date ?? ''),
-    q(e.is_active ? 'Yes' : 'No'),
-    q(e.created_at ? e.created_at.slice(0, 10) : ''),
-  ])
+  const csvRows = rows.map((row) => {
+    const amountInBase = Number(row.amount) * Number(row.exchange_rate)
+    return [
+      csvEscape(row.spent_on ?? ''),
+      csvEscape(row.name ?? ''),
+      csvEscape(String(row.amount ?? '')),
+      csvEscape(row.currency ?? ''),
+      csvEscape(String(row.exchange_rate ?? '')),
+      csvEscape(String(amountInBase)),
+      csvEscape(row.spend_categories?.name ?? ''),
+      csvEscape(row.spend_rules?.name ?? ''),
+      csvEscape(row.notes ?? ''),
+    ].join(',')
+  })
 
-  const csv = [headers.join(','), ...rows.map(r => r.join(','))].join('\n')
+  const csv = [headers.join(','), ...csvRows].join('\n')
 
   return new NextResponse(csv, {
     headers: {
       'Content-Type': 'text/csv',
-      'Content-Disposition': 'attachment; filename="subtrack-expenses.csv"',
+      'Content-Disposition': 'attachment; filename="expenses.csv"',
     },
   })
 }

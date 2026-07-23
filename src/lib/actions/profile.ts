@@ -33,7 +33,7 @@ export async function updateProfile(data: ProfileFormValues) {
   }
 
   revalidatePath('/dashboard')
-  revalidatePath('/more')
+  revalidatePath('/settings')
   return { success: true }
 }
 
@@ -57,7 +57,7 @@ export async function updateEmail(data: UpdateEmailValues) {
   // Optimistically sync profiles.email so it doesn't go stale while awaiting confirmation
   await supabase.from('profiles').update({ email: data.email }).eq('id', user.id)
 
-  revalidatePath('/more')
+  revalidatePath('/settings')
   return { success: true, message: 'Check your new email address for confirmation' }
 }
 

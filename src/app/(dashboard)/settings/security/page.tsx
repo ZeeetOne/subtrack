@@ -13,7 +13,7 @@ export default async function SecurityPage() {
   return (
     <div className="pb-24 font-sans">
       <div className="mb-8 flex items-center gap-4">
-        <Link href="/more" className="p-2 bg-[var(--card)] rounded-xl shadow-sm hover:bg-[var(--accent)] transition-colors">
+        <Link href="/settings" className="p-2 bg-[var(--card)] rounded-xl shadow-sm hover:bg-[var(--accent)] transition-colors">
           <ChevronLeft className="w-5 h-5 text-[var(--foreground)]" />
         </Link>
         <div>

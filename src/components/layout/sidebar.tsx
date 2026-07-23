@@ -10,7 +10,7 @@ const navItems = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Expenses', href: '/expenses', icon: CreditCard },
   { name: 'Stats', href: '/stats', icon: BarChart2 },
-  { name: 'More', href: '/more', icon: Settings2 },
+  { name: 'Settings', href: '/settings', icon: Settings2 },
 ]
 
 export function Sidebar() {
