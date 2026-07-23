@@ -59,7 +59,7 @@ async function recomputeRuleNextDue(supabase: Supabase, ruleId: string, userId: 
 export async function getSpendCategories() {
   const { supabase, user } = await requireUser()
   if (!user) return { error: 'Unauthorized' }
-  const { data, error } = await supabase.from('spend_categories').select('*').order('name')
+  const { data, error } = await supabase.from('spend_categories').select('*').eq('user_id', user.id).order('name')
   if (error) return { error: error.message }
   return { data }
 }
