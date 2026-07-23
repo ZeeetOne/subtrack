@@ -1,15 +1,33 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { Card, CardContent } from '@/components/ui/card'
-import { TrendingUp, Calendar, History, LayoutDashboard } from 'lucide-react'
+import Link from 'next/link'
+import { subMonths, format } from 'date-fns'
+import { TrendingUp, Repeat, Receipt, CalendarClock, History, ChevronLeft, ChevronRight } from 'lucide-react'
+import { DueCard } from '@/components/spend/due-card'
+import { EntryRow } from '@/components/spend/entry-row'
+import { SpendingHeatmap, type HeatmapDay } from '@/components/dashboard/spending-heatmap'
+import { SpendCharts } from '@/components/spend/spend-charts'
 import { batchGetExchangeRates } from '@/lib/currency'
-import { startOfMonth, endOfMonth } from 'date-fns'
-import { ExpenseCard } from '@/components/expenses/expense-card'
-import { PaymentConfirmCard } from '@/components/expenses/payment-confirm-card'
-import { getOccurrencesInMonth, parseLocalDate, toLocalDateString } from '@/lib/expense-utils'
-import type { Expense, ExpensePayment, ProcessedExpense, ExpenseOccurrenceWithExpense } from '@/lib/types'
+import { monthlyEstimate } from '@/lib/spend-utils'
+import { parseLocalDate, toLocalDateString } from '@/lib/expense-utils'
+import type { SpendEntry, SpendRule, ProcessedSpendEntry } from '@/lib/types'
 
-export default async function DashboardPage() {
+type SpendEntryRow = SpendEntry & { spend_categories: { name: string } | null }
+
+function formatCurrency(amount: number, currency: string) {
+  return new Intl.NumberFormat('en-US', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: currency === 'IDR' ? 0 : 2,
+    maximumFractionDigits: currency === 'IDR' ? 0 : 2,
+  }).format(amount)
+}
+
+export default async function DashboardPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ month?: string }>
+}) {
   const supabase = await createClient()
 
   const {
@@ -20,7 +38,6 @@ export default async function DashboardPage() {
     redirect('/login')
   }
 
-  // Fetch profile to get base currency
   const { data: profile } = await supabase
     .from('profiles')
     .select('base_currency')
@@ -29,162 +46,156 @@ export default async function DashboardPage() {
 
   const baseCurrency = profile?.base_currency || 'IDR'
 
-  // Fetch all active expenses
-  const { data: expenses } = await supabase
-    .from('expenses')
+  // Month window: ?month=YYYY-MM, defaults to the current month
+  const { month: monthParam } = await searchParams
+  const now = new Date()
+  let year = now.getFullYear()
+  let month = now.getMonth() // 0-indexed
+  if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+    const [y, m] = monthParam.split('-').map(Number)
+    if (m >= 1 && m <= 12) {
+      year = y
+      month = m - 1
+    }
+  }
+
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
+  const todayStr = toLocalDateString(today)
+
+  const monthStartDate = new Date(year, month, 1)
+  const monthEndDate = new Date(year, month + 1, 0)
+  const monthStart = toLocalDateString(monthStartDate)
+  const monthEnd = toLocalDateString(monthEndDate)
+  const monthLabel = monthStartDate.toLocaleString('default', { month: 'long', year: 'numeric' })
+  const monthParamStr = (y: number, m: number) => `${y}-${String(m + 1).padStart(2, '0')}`
+  const prevHref = `/dashboard?month=${monthParamStr(month === 0 ? year - 1 : year, month === 0 ? 11 : month - 1)}`
+  const nextHref = `/dashboard?month=${monthParamStr(month === 11 ? year + 1 : year, month === 11 ? 0 : month + 1)}`
+
+  // 6-month window ending at the viewed month — one query covers the month's
+  // own entries (sliced below), the trailing-6-months chart, and "recent".
+  const sixMonthStartDate = subMonths(monthStartDate, 5)
+  const sixMonthStart = toLocalDateString(sixMonthStartDate)
+
+  const { data: entriesData } = await supabase
+    .from('spend_entries')
+    .select('*, spend_categories(name)')
+    .eq('user_id', user.id)
+    .gte('spent_on', sixMonthStart)
+    .lte('spent_on', monthEnd)
+    .order('spent_on', { ascending: false })
+    .order('created_at', { ascending: false })
+
+  const sixMonthRows = (entriesData || []) as SpendEntryRow[]
+  const sixMonthEntries: ProcessedSpendEntry[] = sixMonthRows.map((row) => {
+    const { spend_categories, ...entry } = row
+    return {
+      ...entry,
+      categoryName: spend_categories?.name ?? null,
+      amountInBase: Number(entry.amount) * Number(entry.exchange_rate),
+    }
+  })
+
+  // This month's slice, derived from the 6-month fetch (already sorted desc)
+  const monthEntries = sixMonthEntries.filter((e) => e.spent_on >= monthStart && e.spent_on <= monthEnd)
+  const recentEntries = sixMonthEntries.slice(0, 5)
+
+  // Bucket the 6-month window into per-month totals for the bar chart
+  const monthBuckets: { key: string; label: string }[] = []
+  for (let i = 5; i >= 0; i--) {
+    const d = subMonths(monthStartDate, i)
+    monthBuckets.push({
+      key: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`,
+      label: d.toLocaleString('default', { month: 'short', year: 'numeric' }),
+    })
+  }
+  const bucketTotals = new Map<string, number>(monthBuckets.map((b) => [b.key, 0]))
+  sixMonthEntries.forEach((e) => {
+    const key = e.spent_on.slice(0, 7)
+    if (bucketTotals.has(key)) {
+      bucketTotals.set(key, (bucketTotals.get(key) ?? 0) + e.amountInBase)
+    }
+  })
+  const monthlyTotals = monthBuckets.map((b) => ({ month: b.label, total: bucketTotals.get(b.key) ?? 0 }))
+
+  // Active subscription rules
+  const { data: rulesData } = await supabase
+    .from('spend_rules')
     .select('*')
     .eq('user_id', user.id)
-    .eq('is_active', true)
+    .eq('status', 'active')
+    .order('next_due', { ascending: true })
 
-  // Lapsed expenses (stopped for now) are excluded from all dashboard math
-  const activeExpenses = ((expenses || []) as Expense[]).filter(e => e.status !== 'lapsed')
+  const activeRules = (rulesData || []) as SpendRule[]
 
-  // Batch-fetch all needed exchange rates in one pass (one call per unique currency)
-  const uniqueCurrencies = [...new Set((activeExpenses as Expense[]).map(e => e.currency))]
-  const { rates: rateMap, usingSecondary, unavailablePairs } = await batchGetExchangeRates(uniqueCurrencies, baseCurrency)
-
-  const processExpense = (e: Expense): ProcessedExpense => {
-    const rate = rateMap[e.currency] ?? null
-    if (rate === null) {
-      return { ...e, amountInBase: 0, monthlyInBase: 0, currentRate: null, rateUnavailable: true }
-    }
-    const amountInBase = Number(e.amount) * rate
-    let monthlyInBase = 0
-    switch (e.billing_cycle) {
-      case 'weekly':    monthlyInBase = amountInBase * 4.33; break
-      case 'monthly':   monthlyInBase = amountInBase;        break
-      case 'quarterly': monthlyInBase = amountInBase / 3;    break
-      case 'yearly':    monthlyInBase = amountInBase / 12;   break
-      case 'one-time':  monthlyInBase = 0;                   break
-    }
-    return { ...e, amountInBase, monthlyInBase, currentRate: rate, rateUnavailable: false }
-  }
-
-  const processedExpenses: ProcessedExpense[] = (activeExpenses as Expense[]).map(processExpense)
-
-  const now = new Date()
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
-  const monthStart = startOfMonth(now)
-  const monthEnd = endOfMonth(now)
-
-  // Confirmed payments this month (manual-renewal expenses only)
-  const { data: paymentsData } = await supabase
-    .from('expense_payments')
-    .select('*, expenses(*)')
-    .eq('user_id', user.id)
-    .eq('status', 'paid')
-    .gte('paid_date', toLocalDateString(monthStart))
-    .lte('paid_date', toLocalDateString(monthEnd))
-
-  const monthPayments = (paymentsData || []) as (ExpensePayment & { expenses: Expense | null })[]
-
-  const isManual = (e: Expense) => e.renewal_type === 'manual' && e.billing_cycle !== 'one-time'
-
-  // Manual expenses whose due date has arrived: wait for the user, never auto-count
-  const needsConfirmation = processedExpenses.filter(e =>
-    isManual(e) && e.next_billing_date && parseLocalDate(e.next_billing_date) <= today
+  const uniqueRuleCurrencies = [...new Set(activeRules.map((r) => r.default_currency))]
+  const { rates: ruleRates, usingSecondary, unavailablePairs } = await batchGetExchangeRates(
+    uniqueRuleCurrencies,
+    baseCurrency
   )
 
-  // Calculate current month's specific occurrences
-  const allOccurrencesInMonth: ExpenseOccurrenceWithExpense[] = []
-  processedExpenses.forEach(e => {
-    const occurrences = getOccurrencesInMonth(
-      e,
-      baseCurrency,
-      now.getFullYear(),
-      now.getMonth(),
-      e.currentRate ?? undefined
-    )
-    occurrences.forEach(occ => {
-      // Manual expenses: the payment log is the source of truth for the past,
-      // and the due occurrence is handled by the confirmation flow — only
-      // project genuinely future occurrences.
-      if (isManual(e)) {
-        if (occ.date <= today) return
-      }
-      allOccurrencesInMonth.push({
-        ...e,
-        occurrenceDate: occ.date,
-        occurrenceAmountInBase: occ.amountInBase
-      })
-    })
+  const in30Days = toLocalDateString(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30))
+  const dueRules = activeRules.filter((r) => r.next_due <= todayStr)
+  const upcomingRules = activeRules.filter((r) => r.next_due > todayStr && r.next_due <= in30Days)
+
+  const estMonthlySubscriptions = activeRules.reduce((sum, r) => {
+    const rate = ruleRates[r.default_currency]
+    if (rate == null) return sum
+    return sum + monthlyEstimate(r.default_amount, r.cycle) * rate
+  }, 0)
+
+  // Stat cards
+  const thisMonthTotal = monthEntries.reduce((sum, e) => sum + e.amountInBase, 0)
+  const subscriptionEntries = monthEntries.filter((e) => e.rule_id !== null)
+  const oneTimeEntries = monthEntries.filter((e) => e.rule_id === null)
+  const subscriptionsTotal = subscriptionEntries.reduce((sum, e) => sum + e.amountInBase, 0)
+  const oneTimeTotal = oneTimeEntries.reduce((sum, e) => sum + e.amountInBase, 0)
+
+  // Heatmap: actual per-day totals only (no projections)
+  const dayMap = new Map<string, HeatmapDay>()
+  monthEntries.forEach((e) => {
+    const day = dayMap.get(e.spent_on) ?? { date: e.spent_on, total: 0, items: [] }
+    day.total += e.amountInBase
+    day.items.push({ name: e.name, amountInBase: e.amountInBase, kind: 'paid' })
+    dayMap.set(e.spent_on, day)
   })
-
-  // Confirmed manual payments become "past" entries at their real paid date/amount
-  const paidManualBills: ExpenseOccurrenceWithExpense[] = monthPayments
-    .filter(p => p.expenses && p.paid_date)
-    .map(p => {
-      const base = processExpense(p.expenses as Expense)
-      return {
-        ...base,
-        occurrenceDate: parseLocalDate(p.paid_date as string),
-        occurrenceAmountInBase: Number(p.amount) * Number(p.exchange_rate),
-      }
-    })
-
-  // Split current month occurrences into Past and Upcoming
-  const pastMonthBills = [
-    ...allOccurrencesInMonth.filter(occ => occ.occurrenceDate < today),
-    ...paidManualBills,
-  ]
-  const upcomingMonthBills = allOccurrencesInMonth.filter(occ => occ.occurrenceDate >= today)
-
-  // Future bills (beyond this month)
-  const futureBills = processedExpenses.filter(e => {
-    if (needsConfirmation.some(n => n.id === e.id)) return false
-    if (!e.next_billing_date) return true // Show unscheduled
-    return parseLocalDate(e.next_billing_date) > monthEnd
-  })
-
-  // Sort logic for lists
-  const sortByDate = (a: ExpenseOccurrenceWithExpense, b: ExpenseOccurrenceWithExpense) => a.occurrenceDate.getTime() - b.occurrenceDate.getTime()
-  
-  const sortedPastMonth = [...pastMonthBills].sort((a, b) => b.occurrenceDate.getTime() - a.occurrenceDate.getTime()) // Newest first
-  const sortedUpcomingMonth = [...upcomingMonthBills].sort(sortByDate)
-
-  // Metrics calculation
-  const totalMonthlyRecurringBurn = processedExpenses
-    .filter(e => e.billing_cycle !== 'one-time')
-    .reduce((acc, e) => acc + e.monthlyInBase, 0)
-    
-  const totalYearlyRecurringBurn = totalMonthlyRecurringBurn * 12
-  
-  // Real Outflow components for this month.
-  // Due-but-unconfirmed manual renewals count as expected (remaining), never as paid.
-  const totalPaidSoFar = pastMonthBills.reduce((acc, occ) => acc + occ.occurrenceAmountInBase, 0)
-  const totalAwaitingConfirmation = needsConfirmation.reduce((acc, e) => acc + e.amountInBase, 0)
-  const totalRemainingToPay =
-    upcomingMonthBills.reduce((acc, occ) => acc + occ.occurrenceAmountInBase, 0) + totalAwaitingConfirmation
-  const totalActualMonthOutflow = totalPaidSoFar + totalRemainingToPay
-
-  const paidPercent = totalActualMonthOutflow > 0
-    ? Math.round((totalPaidSoFar / totalActualMonthOutflow) * 100)
-    : 0
-
-  const formatCurrency = (amount: number, currency: string) => {
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: currency,
-      minimumFractionDigits: currency === 'IDR' ? 0 : 2,
-      maximumFractionDigits: currency === 'IDR' ? 0 : 2,
-    }).format(amount)
-  }
+  const heatmapDays = [...dayMap.values()]
 
   return (
     <div className="pb-24 font-sans">
-      <div className="mb-10 px-1">
-        <h1 className="text-4xl font-heading font-bold text-[var(--foreground)] tracking-tight">Dashboard</h1>
-        <p className="text-[var(--muted-foreground)] mt-2 font-medium text-sm">
-          Tracking in <span className="font-bold text-[var(--primary)]">{baseCurrency}</span> • Live rates
-        </p>
+      <div className="mb-8 px-1 flex items-start justify-between flex-wrap gap-3">
+        <div>
+          <h1 className="text-4xl font-heading font-bold text-[var(--foreground)] tracking-tight">Dashboard</h1>
+          <p className="text-[var(--muted-foreground)] mt-2 font-medium text-sm">
+            Tracking in <span className="font-bold text-[var(--primary)]">{baseCurrency}</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-1 bg-[var(--card)] border border-[var(--border)] rounded-full px-1 py-1">
+          <Link
+            href={prevHref}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+            aria-label="Previous month"
+          >
+            <ChevronLeft className="w-4 h-4" />
+          </Link>
+          <span className="text-[13px] font-bold text-[var(--foreground)] tabular-nums px-2 min-w-[130px] text-center">
+            {monthLabel}
+          </span>
+          <Link
+            href={nextHref}
+            className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
+            aria-label="Next month"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </Link>
+        </div>
       </div>
 
-      {/* Rate source warning */}
+      {/* Rate source warnings (subscription estimates only) */}
       {unavailablePairs.length > 0 && (
         <div className="flex items-start gap-3 p-4 rounded-2xl bg-[var(--tertiary-container)] border border-[var(--tertiary)]/20 mb-6">
           <span className="text-[var(--tertiary)] mt-0.5 text-sm shrink-0">⚠</span>
           <p className="text-xs font-medium text-[var(--on-tertiary-container)] leading-relaxed">
-            Live rates unavailable for <strong>{unavailablePairs.join(', ')}</strong>. Expenses in these currencies are excluded from totals. Both rate sources are unreachable.
+            Live rates unavailable for <strong>{unavailablePairs.join(', ')}</strong>. Subscription estimates in these currencies are excluded. Both rate sources are unreachable.
           </p>
         </div>
       )}
@@ -192,100 +203,14 @@ export default async function DashboardPage() {
         <div className="flex items-start gap-3 p-4 rounded-2xl bg-[var(--muted)] border border-[var(--border)] mb-6">
           <span className="text-[var(--muted-foreground)] mt-0.5 text-sm shrink-0">ℹ</span>
           <p className="text-xs font-medium text-[var(--muted-foreground)] leading-relaxed">
-            Using Frankfurter (ECB) as rate source — primary source is currently unavailable.
+            Using Frankfurter (ECB) as rate source for subscription estimates — primary source is currently unavailable.
           </p>
         </div>
       )}
 
-      {/* Main Metrics */}
-      <div className="grid grid-cols-1 gap-6 mb-10">
-
-        {/* Hero card */}
-        <Card className="border-none shadow-xl relative rounded-[1.5rem] overflow-hidden">
-          {/* Deep forest gradient */}
-          <div className="absolute inset-0 bg-gradient-to-br from-[#141e0c] via-[#1a2a10] to-[#213510]" />
-          {/* Decorative lime rings */}
-          <div className="absolute -top-20 -right-20 w-72 h-72 rounded-full border border-[var(--primary)]/10 pointer-events-none" />
-          <div className="absolute -top-8 -right-8 w-44 h-44 rounded-full border border-[var(--primary)]/8 pointer-events-none" />
-          <div className="absolute -bottom-16 -left-16 w-52 h-52 rounded-full bg-[var(--primary)]/[0.04] pointer-events-none" />
-
-          <CardContent className="p-7 sm:p-8 relative z-10">
-            {/* Top row: label + progress pill */}
-            <div className="flex items-start justify-between mb-5">
-              <div>
-                <p className="text-[10px] font-semibold text-white/35 uppercase tracking-[0.22em] mb-0.5">Total spending</p>
-                <p className="text-sm font-bold text-white/60 tracking-wide">
-                  {now.toLocaleString('default', { month: 'long', year: 'numeric' })}
-                </p>
-              </div>
-              <div className="flex items-center gap-1.5 bg-[#aee865]/15 rounded-full px-3 py-1.5 mt-0.5">
-                <div className="w-1.5 h-1.5 rounded-full bg-[#aee865]" />
-                <span className="text-[10px] font-bold text-[#aee865] tabular-nums">{paidPercent}% paid</span>
-              </div>
-            </div>
-
-            {/* Main amount — lime */}
-            <div className="text-[2.75rem] sm:text-5xl font-heading font-bold text-[#aee865] tracking-tighter leading-none mb-7">
-              {formatCurrency(totalActualMonthOutflow, baseCurrency)}
-            </div>
-
-            {/* Progress track */}
-            <div className="w-full h-[3px] rounded-full bg-white/10 mb-6 overflow-hidden">
-              <div
-                className="h-full rounded-full bg-[#aee865]/75 transition-all duration-700 ease-out"
-                style={{ width: `${paidPercent}%` }}
-              />
-            </div>
-
-            {/* Paid / Remaining cards */}
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white/[0.06] rounded-xl p-3 sm:p-3.5">
-                <p className="text-[9px] font-semibold text-white/30 uppercase tracking-[0.2em] mb-1.5">Paid</p>
-                <p className="text-base sm:text-lg font-heading font-bold text-white/55 tracking-tight tabular-nums leading-tight">
-                  {formatCurrency(totalPaidSoFar, baseCurrency)}
-                </p>
-              </div>
-              <div className="bg-white/[0.06] rounded-xl p-3 sm:p-3.5">
-                <p className="text-[9px] font-semibold text-white/30 uppercase tracking-[0.2em] mb-1.5">Remaining</p>
-                <p className="text-base sm:text-lg font-heading font-bold text-white/85 tracking-tight tabular-nums leading-tight">
-                  {formatCurrency(totalRemainingToPay, baseCurrency)}
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <Card className="bg-[var(--card)] border border-[var(--border)] shadow-none rounded-2xl p-1">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-[11px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">costs you per month</span>
-                <TrendingUp className="w-4 h-4 text-[var(--primary)]" />
-              </div>
-              <div className="text-3xl font-heading font-bold text-[var(--foreground)] tracking-tight">
-                ~{formatCurrency(totalMonthlyRecurringBurn, baseCurrency)}<span className="text-lg font-bold text-[var(--muted-foreground)] ml-1">/mo</span>
-              </div>
-              <p className="text-[var(--muted-foreground)] text-xs mt-2 font-medium">average across all your subscriptions</p>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-[var(--card)] border border-[var(--border)] shadow-none rounded-2xl p-1">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-[11px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">per year if nothing changes</span>
-                <Calendar className="w-4 h-4 text-[var(--tertiary)]" />
-              </div>
-              <div className="text-3xl font-heading font-bold text-[var(--foreground)] tracking-tight">
-                ~{formatCurrency(totalYearlyRecurringBurn, baseCurrency)}<span className="text-lg font-bold text-[var(--muted-foreground)] ml-1">/yr</span>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-      </div>
-
       <div className="space-y-12">
-        {/* Needs confirmation */}
-        {needsConfirmation.length > 0 && (
+        {/* Due confirmations */}
+        {dueRules.length > 0 && (
           <div className="space-y-6">
             <div className="flex items-center justify-between px-1">
               <div className="flex items-center space-x-2">
@@ -296,106 +221,157 @@ export default async function DashboardPage() {
                 <h2 className="text-2xl font-heading font-bold text-[var(--foreground)]">Needs confirmation</h2>
               </div>
               <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest bg-[var(--muted)] px-3 py-1 rounded-full">
-                {needsConfirmation.length} due
+                {dueRules.length} due
               </span>
             </div>
-            <p className="text-sm text-[var(--muted-foreground)] font-medium px-1 -mt-3">
-              Did these renew? They stay out of your paid total until you confirm.
-            </p>
             <div className="space-y-4">
-              {needsConfirmation.map(e => (
-                <PaymentConfirmCard
-                  key={e.id}
-                  expense={e}
-                  convertedAmount={e.amountInBase}
-                  baseCurrency={baseCurrency}
-                />
+              {dueRules.map((rule) => (
+                <DueCard key={rule.id} rule={rule} />
               ))}
             </div>
           </div>
         )}
 
-        {/* Current Month: Upcoming */}
+        {/* Stat cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
+                <TrendingUp className="w-3.5 h-3.5 text-[var(--primary)]" />
+              </div>
+              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">This month</span>
+            </div>
+            <p className="text-xl font-heading font-bold text-[var(--foreground)] tracking-tight tabular-nums break-words">
+              {formatCurrency(thisMonthTotal, baseCurrency)}
+            </p>
+          </div>
+
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
+                <Repeat className="w-3.5 h-3.5 text-[var(--primary)]" />
+              </div>
+              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">Subscriptions</span>
+            </div>
+            <p className="text-xl font-heading font-bold text-[var(--foreground)] tracking-tight tabular-nums break-words">
+              {formatCurrency(subscriptionsTotal, baseCurrency)}
+            </p>
+          </div>
+
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
+                <Receipt className="w-3.5 h-3.5 text-[var(--tertiary)]" />
+              </div>
+              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">One-time</span>
+            </div>
+            <p className="text-xl font-heading font-bold text-[var(--foreground)] tracking-tight tabular-nums break-words">
+              {formatCurrency(oneTimeTotal, baseCurrency)}
+            </p>
+          </div>
+
+          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5">
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
+                <CalendarClock className="w-3.5 h-3.5 text-[var(--tertiary)]" />
+              </div>
+              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">Est. monthly subs</span>
+            </div>
+            <p className="text-xl font-heading font-bold text-[var(--foreground)] tracking-tight tabular-nums break-words">
+              &asymp; {formatCurrency(estMonthlySubscriptions, baseCurrency)}
+            </p>
+          </div>
+        </div>
+
+        {/* Spending calendar */}
+        <SpendingHeatmap
+          monthLabel={monthLabel}
+          year={year}
+          month={month}
+          days={heatmapDays}
+          baseCurrency={baseCurrency}
+          prevHref={prevHref}
+          nextHref={nextHref}
+          todayStr={todayStr}
+        />
+
+        {/* Charts */}
+        <SpendCharts entries={monthEntries} monthlyTotals={monthlyTotals} baseCurrency={baseCurrency} />
+
+        {/* Upcoming (next 30 days) */}
         <div className="space-y-6">
           <div className="flex items-center justify-between px-1">
             <div className="flex items-center space-x-2">
-              <LayoutDashboard className="w-5 h-5 text-[var(--primary)]" />
-              <h2 className="text-2xl font-heading font-bold text-[var(--foreground)]">Remaining this month</h2>
+              <CalendarClock className="w-5 h-5 text-[var(--primary)]" />
+              <h2 className="text-2xl font-heading font-bold text-[var(--foreground)]">Upcoming</h2>
             </div>
             <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest bg-[var(--muted)] px-3 py-1 rounded-full">
-              {now.toLocaleString('default', { month: 'long' })}
+              next 30 days
             </span>
           </div>
-          
-          <div className="space-y-4">
-            {sortedUpcomingMonth.map((occ, idx) => (
-              <ExpenseCard
-                key={`${occ.id}-${idx}`}
-                expense={occ}
-                convertedAmount={occ.occurrenceAmountInBase}
-                baseCurrency={baseCurrency}
-                showActions={false}
-                displayDate={occ.occurrenceDate}
-              />
-            ))}
-            {sortedUpcomingMonth.length === 0 && (
-              <p className="text-sm text-[var(--muted-foreground)] font-medium px-1">No remaining bills for this month.</p>
-            )}
-          </div>
-        </div>
 
-        {/* Current Month: Past */}
-        {sortedPastMonth.length > 0 && (
-          <div className="space-y-6">
-            <div className="flex items-center justify-between px-1">
-              <div className="flex items-center space-x-2">
-                <History className="w-5 h-5 text-[var(--muted-foreground)]" />
-                <h2 className="text-2xl font-heading font-bold text-[var(--foreground)] opacity-70">Paid this month</h2>
-              </div>
+          {upcomingRules.length > 0 ? (
+            <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
+              {upcomingRules.map((rule) => {
+                const rate = ruleRates[rule.default_currency]
+                const estimate = rate == null ? null : rule.default_amount * rate
+                return (
+                  <div key={rule.id} className="flex items-center gap-3 px-4 py-3.5">
+                    <div className="flex-1 min-w-0">
+                      <p className="font-heading font-semibold text-[15px] tracking-tight text-[var(--foreground)] truncate">
+                        {rule.name}
+                      </p>
+                      <p className="text-[11px] font-semibold text-[var(--muted-foreground)] mt-0.5">
+                        Due {format(parseLocalDate(rule.next_due), 'MMM d, yyyy')}
+                      </p>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      {estimate !== null ? (
+                        <span className="text-[15px] font-heading font-semibold text-[var(--foreground)] tracking-tight tabular-nums">
+                          &asymp; {formatCurrency(estimate, baseCurrency)}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] text-[var(--muted-foreground)] font-medium">rate unavailable</span>
+                      )}
+                    </div>
+                  </div>
+                )
+              })}
             </div>
-            
-            <div className="space-y-4">
-              {sortedPastMonth.map((occ, idx) => (
-                <div key={`${occ.id}-${idx}`} className="opacity-70">
-                  <ExpenseCard
-                    expense={occ}
-                    convertedAmount={occ.occurrenceAmountInBase}
-                    baseCurrency={baseCurrency}
-                    showActions={false}
-                    displayDate={occ.occurrenceDate}
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Beyond This Month */}
-        <div className="space-y-6 pt-4 border-t border-[var(--background)]">
-          <h2 className="text-xl font-heading font-bold text-[var(--muted-foreground)] px-1">Beyond {now.toLocaleString('default', { month: 'long' })}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {futureBills.map(e => (
-              <ExpenseCard
-                key={e.id}
-                expense={e}
-                convertedAmount={e.amountInBase}
-                baseCurrency={baseCurrency}
-                showActions={false}
-              />
-            ))}
-          </div>
-          {futureBills.length === 0 && (
-            <p className="text-sm text-[var(--muted-foreground)] font-medium px-1">No subscriptions scheduled beyond this month.</p>
+          ) : (
+            <p className="text-sm text-[var(--muted-foreground)] font-medium px-1">No subscriptions due in the next 30 days.</p>
           )}
         </div>
 
-        {activeExpenses.length === 0 && (
-          <div className="p-8 text-center bg-[var(--card)] rounded-2xl border-2 border-dashed border-[var(--border)]">
-            <p className="text-[var(--muted-foreground)] font-bold text-sm">
-              No expenses yet. Add one to see the breakdown.
-            </p>
+        {/* Recent entries */}
+        <div className="space-y-6">
+          <div className="flex items-center justify-between px-1">
+            <div className="flex items-center space-x-2">
+              <History className="w-5 h-5 text-[var(--muted-foreground)]" />
+              <h2 className="text-2xl font-heading font-bold text-[var(--foreground)]">Recent</h2>
+            </div>
+            <Link
+              href="/expenses"
+              className="text-[11px] font-semibold text-[var(--primary)] uppercase tracking-widest hover:opacity-70"
+            >
+              View all
+            </Link>
           </div>
-        )}
+
+          {recentEntries.length > 0 ? (
+            <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
+              {recentEntries.map((entry) => (
+                <EntryRow key={entry.id} entry={entry} baseCurrency={baseCurrency} />
+              ))}
+            </div>
+          ) : (
+            <div className="p-8 text-center bg-[var(--card)] rounded-2xl border-2 border-dashed border-[var(--border)]">
+              <p className="text-[var(--muted-foreground)] font-bold text-sm">
+                No expenses yet. Add one to see the breakdown.
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )
