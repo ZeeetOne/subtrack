@@ -3,8 +3,12 @@ import { z } from "zod";
 const dateNotFuture = (val: string) => {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(val)) return false;
   const [y, m, d] = val.split('-').map(Number);
-  const today = new Date(); today.setHours(23, 59, 59, 999);
-  return new Date(y, m - 1, d) <= today;
+  // One day of grace: this refine also runs server-side, where the clock may be
+  // up to a day behind the user's local date (UTC server, UTC+N user).
+  const limit = new Date();
+  limit.setDate(limit.getDate() + 1);
+  limit.setHours(23, 59, 59, 999);
+  return new Date(y, m - 1, d) <= limit;
 };
 
 const amountString = z.string().refine((val) => !isNaN(Number(val)) && Number(val) > 0, {

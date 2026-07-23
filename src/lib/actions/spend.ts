@@ -157,14 +157,16 @@ export async function updateSpendEntry(id: string, data: SpendEntryFormValues) {
   if (!parsed.success) return { error: 'Invalid fields' }
   const v = parsed.data
 
-  let exchangeRate: number
-  try {
-    exchangeRate = await rateFor(supabase, user.id, v.currency)
-  } catch {
-    return { error: 'Unable to fetch exchange rate. Please try again.' }
-  }
+  const { data: existing } = await supabase.from('spend_entries').select('rule_id, currency, exchange_rate').match({ id, user_id: user.id }).single()
 
-  const { data: existing } = await supabase.from('spend_entries').select('rule_id').match({ id, user_id: user.id }).single()
+  let exchangeRate = Number(existing?.exchange_rate ?? 1)
+  if (!existing || existing.currency !== v.currency) {
+    try {
+      exchangeRate = await rateFor(supabase, user.id, v.currency)
+    } catch {
+      return { error: 'Unable to fetch exchange rate. Please try again.' }
+    }
+  }
 
   const { error } = await supabase.from('spend_entries').update({
     name: v.name,
@@ -223,7 +225,7 @@ export async function confirmRulePayment(ruleId: string, data: ConfirmPaymentVal
   }
 
   const amount = parseFloat(parsed.data.amount)
-  const { error: insertError } = await supabase.from('spend_entries').insert({
+  const { data: insertedEntry, error: insertError } = await supabase.from('spend_entries').insert({
     user_id: user.id,
     name: rule.name,
     amount,
@@ -233,7 +235,7 @@ export async function confirmRulePayment(ruleId: string, data: ConfirmPaymentVal
     notes: null,
     spent_on: parsed.data.paid_date,
     rule_id: ruleId,
-  })
+  }).select('id').single()
   if (insertError) return { error: insertError.message }
 
   const { error: updateError } = await supabase.from('spend_rules').update({
@@ -241,7 +243,12 @@ export async function confirmRulePayment(ruleId: string, data: ConfirmPaymentVal
     default_amount: amount,
     status: 'active',
   }).match({ id: ruleId, user_id: user.id })
-  if (updateError) return { error: updateError.message }
+  if (updateError) {
+    if (insertedEntry) {
+      await supabase.from('spend_entries').delete().match({ id: insertedEntry.id, user_id: user.id })
+    }
+    return { error: updateError.message }
+  }
 
   revalidateAll()
   return { success: true }
