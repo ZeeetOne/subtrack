@@ -68,10 +68,14 @@ export async function createSpendCategory(data: { name: string }) {
   const { supabase, user } = await requireUser()
   if (!user) return { error: 'Unauthorized' }
   if (!data.name.trim()) return { error: 'Name is required' }
-  const { error } = await supabase.from('spend_categories').insert({ name: data.name.trim(), user_id: user.id })
+  const { data: created, error } = await supabase
+    .from('spend_categories')
+    .insert({ name: data.name.trim(), user_id: user.id })
+    .select()
+    .single()
   if (error) return { error: error.message }
   revalidateAll()
-  return { success: true }
+  return { data: created }
 }
 
 export async function updateSpendCategory(id: string, data: { name: string }) {

@@ -5,13 +5,13 @@ import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
 import { spendEntrySchema, type SpendEntryFormValues } from '@/lib/schemas/spend'
-import { createSpendEntry, updateSpendEntry, getSpendCategories } from '@/lib/actions/spend'
+import { createSpendEntry, updateSpendEntry, getSpendCategories, createSpendCategory } from '@/lib/actions/spend'
 import { advanceCycle, type SpendCycle } from '@/lib/spend-utils'
 import { toLocalDateString, parseLocalDate } from '@/lib/expense-utils'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { ChevronDown, Loader2 } from 'lucide-react'
+import { ChevronDown, Loader2, Plus } from 'lucide-react'
 
 const cycles: { value: SpendCycle; label: string }[] = [
   { value: 'weekly', label: 'Weekly' },
@@ -48,6 +48,9 @@ const labelClass = "block text-[11px] font-semibold uppercase tracking-widest te
 export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [categories, setCategories] = useState<Category[]>([])
+  const [isAddingCategory, setIsAddingCategory] = useState(false)
+  const [newCategoryName, setNewCategoryName] = useState('')
+  const [isSavingCategory, setIsSavingCategory] = useState(false)
   const submittedRef = useRef(false)
 
   const {
@@ -72,12 +75,29 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
   const spentOn = watch('spent_on')
 
   useEffect(() => {
-    async function loadCategories() {
-      const result = await getSpendCategories()
-      if (result.data) setCategories(result.data)
-    }
     loadCategories()
   }, [])
+
+  async function loadCategories() {
+    const result = await getSpendCategories()
+    if (result.data) setCategories(result.data)
+  }
+
+  async function handleAddCategory() {
+    const name = newCategoryName.trim()
+    if (!name) return
+    setIsSavingCategory(true)
+    const result = await createSpendCategory({ name })
+    if (result.error) {
+      toast.error(result.error)
+    } else {
+      await loadCategories()
+      if (result.data) setValue('category_id', result.data.id)
+      setNewCategoryName('')
+      setIsAddingCategory(false)
+    }
+    setIsSavingCategory(false)
+  }
 
   let nextPaymentHint: string | null = null
   if (isSubscription && selectedCycle && spentOn && /^\d{4}-\d{2}-\d{2}$/.test(spentOn)) {
@@ -181,32 +201,68 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
       </div>
 
       {/* Category */}
-      {categories.length > 0 && (
-        <div>
-          <label className={labelClass}>Category</label>
-          <div className="flex flex-wrap gap-2">
-            {categories.map((cat) => {
-              const isSelected = selectedCategoryId === cat.id
-              return (
-                <button
-                  key={cat.id}
-                  type="button"
-                  onClick={() => setValue('category_id', cat.id)}
-                  className={cn(
-                    "px-3.5 py-1.5 rounded-full text-[12px] font-semibold transition-all duration-150 border",
-                    isSelected
-                      ? "bg-[var(--primary)] text-white border-[var(--primary)]"
-                      : "bg-transparent text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]"
-                  )}
-                >
-                  {cat.name}
-                </button>
-              )
-            })}
-          </div>
-          {errors.category_id && <p className="text-[10px] text-[var(--destructive)] font-medium mt-1">{errors.category_id.message}</p>}
+      <div>
+        <label className={labelClass}>Category</label>
+        <div className="flex flex-wrap items-center gap-2">
+          {categories.map((cat) => {
+            const isSelected = selectedCategoryId === cat.id
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => setValue('category_id', isSelected ? undefined : cat.id)}
+                className={cn(
+                  "px-3.5 py-1.5 rounded-full text-[12px] font-semibold transition-all duration-150 border",
+                  isSelected
+                    ? "bg-[var(--primary)] text-white border-[var(--primary)]"
+                    : "bg-transparent text-[var(--muted-foreground)] border-[var(--border)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)]"
+                )}
+              >
+                {cat.name}
+              </button>
+            )
+          })}
+
+          {isAddingCategory ? (
+            <div className="flex items-center gap-1.5">
+              <Input
+                autoFocus
+                value={newCategoryName}
+                onChange={(e) => setNewCategoryName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    handleAddCategory()
+                  } else if (e.key === 'Escape') {
+                    setIsAddingCategory(false)
+                    setNewCategoryName('')
+                  }
+                }}
+                placeholder="Category name"
+                className="h-8 w-36 rounded-full border border-[var(--border)] bg-white px-3 text-[12px] font-medium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[var(--primary)]"
+              />
+              <button
+                type="button"
+                onClick={handleAddCategory}
+                disabled={isSavingCategory || !newCategoryName.trim()}
+                className="h-8 px-3 rounded-full text-[12px] font-semibold bg-[var(--primary)] text-white disabled:opacity-50 cursor-pointer"
+              >
+                {isSavingCategory ? '…' : 'Save'}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setIsAddingCategory(true)}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-full text-[12px] font-semibold border border-dashed border-[var(--border)] text-[var(--muted-foreground)] hover:border-[var(--primary)]/40 hover:text-[var(--foreground)] transition-all duration-150"
+            >
+              <Plus className="w-3 h-3" />
+              New
+            </button>
+          )}
         </div>
-      )}
+        {errors.category_id && <p className="text-[10px] text-[var(--destructive)] font-medium mt-1">{errors.category_id.message}</p>}
+      </div>
 
       {/* Notes */}
       <div>
