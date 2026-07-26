@@ -1,7 +1,7 @@
 <div align="center">
   <img src="public/logo.png" alt="SubTrack Logo" width="80" height="80" style="border-radius: 18px" />
   <h1>SubTrack</h1>
-  <p>Know exactly what you're paying for — and when.</p>
+  <p>Track every expense — subscriptions included — and know exactly where your money goes.</p>
 
   <a href="https://subtrack-ten-azure.vercel.app">
     <img src="https://img.shields.io/badge/Live%20App-subtrack--ten--azure.vercel.app-1c3210?style=for-the-badge&logo=vercel&logoColor=aee865" alt="Live App" />
@@ -18,18 +18,19 @@
 
 ## What is SubTrack?
 
-Most people underestimate how much they spend on subscriptions by **40%**. SubTrack gives you a clear, honest picture — every service, every billing date, every charge — converted to your currency using live exchange rates.
+Most people can't say where their money actually goes. SubTrack logs every expense — one-off purchases and recurring subscriptions alike — in one place, converted to your currency using live exchange rates, so you get a clear, honest picture of your spending.
 
 ## Features
 
 | | |
 |---|---|
-| 📅 **All billing cycles** | Weekly, monthly, quarterly, yearly, one-time |
+| 💸 **Expense tracking** | Log any spend, one-time or recurring, with custom categories |
+| 🔁 **Subscriptions** | Track recurring bills across weekly, monthly, quarterly, and yearly cycles |
 | 💱 **Multi-currency** | Live exchange rates via open.er-api.com + Frankfurter fallback |
 | 📊 **Dashboard** | Monthly burn, paid vs. remaining, upcoming bills |
 | 📈 **Stats** | Yearly projection and category breakdown chart |
-| 🗂️ **Categories** | Custom categories to organize your expenses |
-| 📤 **Data export** | Download your data as CSV or JSON |
+| 🗂️ **Categories** | Custom spend categories, created on the fly |
+| 📤 **Data export** | Download your transactions as CSV |
 | 🔐 **Auth** | Email/password and Google OAuth via Supabase |
 | 🔒 **Secure** | Row-level security, rate limiting, current password verification |
 
