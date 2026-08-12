@@ -2,11 +2,11 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { subMonths, format } from 'date-fns'
-import { TrendingUp, Repeat, Receipt, CalendarClock, History, ChevronLeft, ChevronRight } from 'lucide-react'
+import { CalendarClock, History, ChevronLeft, ChevronRight } from 'lucide-react'
 import { DueCard } from '@/components/spend/due-card'
-import { EntryRow } from '@/components/spend/entry-row'
-import { SpendingHeatmap, type HeatmapDay } from '@/components/dashboard/spending-heatmap'
-import { SpendCharts } from '@/components/spend/spend-charts'
+import { EntryList } from '@/components/spend/entry-list'
+import { DashboardStats } from '@/components/dashboard/dashboard-stats'
+import { SyncStatus } from '@/components/offline/sync-status'
 import { batchGetExchangeRates } from '@/lib/currency'
 import { monthlyEstimate } from '@/lib/spend-utils'
 import { parseLocalDate, toLocalDateString } from '@/lib/expense-utils'
@@ -95,11 +95,11 @@ export default async function DashboardPage({
     }
   })
 
-  // This month's slice, derived from the 6-month fetch (already sorted desc)
-  const monthEntries = sixMonthEntries.filter((e) => e.spent_on >= monthStart && e.spent_on <= monthEnd)
-  const recentEntries = sixMonthEntries.slice(0, 5)
+  // The month slice, the totals and "Recent" are all derived downstream, after
+  // locally-queued rows are merged in — see DashboardStats and EntryList.
 
-  // Bucket the 6-month window into per-month totals for the bar chart
+  // Bucket the 6-month window into per-month totals for the bar chart.
+  // The totals themselves are derived in DashboardStats, over merged entries.
   const monthBuckets: { key: string; label: string }[] = []
   for (let i = 5; i >= 0; i--) {
     const d = subMonths(monthStartDate, i)
@@ -108,14 +108,6 @@ export default async function DashboardPage({
       label: d.toLocaleString('default', { month: 'short', year: 'numeric' }),
     })
   }
-  const bucketTotals = new Map<string, number>(monthBuckets.map((b) => [b.key, 0]))
-  sixMonthEntries.forEach((e) => {
-    const key = e.spent_on.slice(0, 7)
-    if (bucketTotals.has(key)) {
-      bucketTotals.set(key, (bucketTotals.get(key) ?? 0) + e.amountInBase)
-    }
-  })
-  const monthlyTotals = monthBuckets.map((b) => ({ month: b.label, total: bucketTotals.get(b.key) ?? 0 }))
 
   // Active subscription rules
   const { data: rulesData } = await supabase
@@ -143,23 +135,6 @@ export default async function DashboardPage({
     return sum + monthlyEstimate(r.default_amount, r.cycle) * rate
   }, 0)
 
-  // Stat cards
-  const thisMonthTotal = monthEntries.reduce((sum, e) => sum + e.amountInBase, 0)
-  const subscriptionEntries = monthEntries.filter((e) => e.rule_id !== null)
-  const oneTimeEntries = monthEntries.filter((e) => e.rule_id === null)
-  const subscriptionsTotal = subscriptionEntries.reduce((sum, e) => sum + e.amountInBase, 0)
-  const oneTimeTotal = oneTimeEntries.reduce((sum, e) => sum + e.amountInBase, 0)
-
-  // Heatmap: actual per-day totals only (no projections)
-  const dayMap = new Map<string, HeatmapDay>()
-  monthEntries.forEach((e) => {
-    const day = dayMap.get(e.spent_on) ?? { date: e.spent_on, total: 0, items: [] }
-    day.total += e.amountInBase
-    day.items.push({ name: e.name, amountInBase: e.amountInBase, kind: 'paid' })
-    dayMap.set(e.spent_on, day)
-  })
-  const heatmapDays = [...dayMap.values()]
-
   return (
     <div className="pb-24 font-sans">
       <div className="mb-8 px-1 flex items-start justify-between flex-wrap gap-3">
@@ -168,6 +143,9 @@ export default async function DashboardPage({
           <p className="text-[var(--muted-foreground)] mt-2 font-medium text-sm">
             Tracking in <span className="font-bold text-[var(--primary)]">{baseCurrency}</span>
           </p>
+          <div className="mt-3">
+            <SyncStatus />
+          </div>
         </div>
         <div className="flex items-center gap-1 bg-[var(--card)] border border-[var(--border)] rounded-full px-1 py-1">
           <Link
@@ -232,71 +210,23 @@ export default async function DashboardPage({
           </div>
         )}
 
-        {/* Stat cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-                <TrendingUp className="w-3.5 h-3.5 text-[var(--primary)]" />
-              </div>
-              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">This month</span>
-            </div>
-            <p className="text-xl font-heading font-bold text-[var(--foreground)] tracking-tight tabular-nums break-words">
-              {formatCurrency(thisMonthTotal, baseCurrency)}
-            </p>
-          </div>
-
-          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-                <Repeat className="w-3.5 h-3.5 text-[var(--primary)]" />
-              </div>
-              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">Subscriptions</span>
-            </div>
-            <p className="text-xl font-heading font-bold text-[var(--foreground)] tracking-tight tabular-nums break-words">
-              {formatCurrency(subscriptionsTotal, baseCurrency)}
-            </p>
-          </div>
-
-          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-                <Receipt className="w-3.5 h-3.5 text-[var(--tertiary)]" />
-              </div>
-              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">One-time</span>
-            </div>
-            <p className="text-xl font-heading font-bold text-[var(--foreground)] tracking-tight tabular-nums break-words">
-              {formatCurrency(oneTimeTotal, baseCurrency)}
-            </p>
-          </div>
-
-          <div className="bg-[var(--card)] rounded-2xl border border-[var(--border)] p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <div className="w-7 h-7 rounded-lg bg-[var(--accent)] flex items-center justify-center">
-                <CalendarClock className="w-3.5 h-3.5 text-[var(--tertiary)]" />
-              </div>
-              <span className="text-[10px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">Est. monthly subs</span>
-            </div>
-            <p className="text-xl font-heading font-bold text-[var(--foreground)] tracking-tight tabular-nums break-words">
-              &asymp; {formatCurrency(estMonthlySubscriptions, baseCurrency)}
-            </p>
-          </div>
-        </div>
-
-        {/* Spending calendar */}
-        <SpendingHeatmap
+        {/* Stat cards, calendar and charts — all recomputed client-side over
+            server rows merged with anything still queued locally. */}
+        <DashboardStats
+          entries={sixMonthEntries}
+          monthStart={monthStart}
+          monthEnd={monthEnd}
+          sixMonthStart={sixMonthStart}
+          monthBuckets={monthBuckets}
+          baseCurrency={baseCurrency}
+          estMonthlySubscriptions={estMonthlySubscriptions}
           monthLabel={monthLabel}
           year={year}
           month={month}
-          days={heatmapDays}
-          baseCurrency={baseCurrency}
           prevHref={prevHref}
           nextHref={nextHref}
           todayStr={todayStr}
         />
-
-        {/* Charts */}
-        <SpendCharts entries={monthEntries} monthlyTotals={monthlyTotals} baseCurrency={baseCurrency} />
 
         {/* Upcoming (next 30 days) */}
         <div className="space-y-6">
@@ -358,19 +288,21 @@ export default async function DashboardPage({
             </Link>
           </div>
 
-          {recentEntries.length > 0 ? (
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
-              {recentEntries.map((entry) => (
-                <EntryRow key={entry.id} entry={entry} baseCurrency={baseCurrency} />
-              ))}
-            </div>
-          ) : (
-            <div className="p-8 text-center bg-[var(--card)] rounded-2xl border-2 border-dashed border-[var(--border)]">
-              <p className="text-[var(--muted-foreground)] font-bold text-sm">
-                No expenses yet. Add one to see the breakdown.
-              </p>
-            </div>
-          )}
+          <EntryList
+            entries={sixMonthEntries}
+            baseCurrency={baseCurrency}
+            windowStart={sixMonthStart}
+            windowEnd={monthEnd}
+            limit={5}
+            flat
+            emptyState={
+              <div className="p-8 text-center bg-[var(--card)] rounded-2xl border-2 border-dashed border-[var(--border)]">
+                <p className="text-[var(--muted-foreground)] font-bold text-sm">
+                  No expenses yet. Add one to see the breakdown.
+                </p>
+              </div>
+            }
+          />
         </div>
       </div>
     </div>

@@ -2,12 +2,32 @@
 
 import { revalidatePath } from 'next/cache'
 import { createClient } from '@/lib/supabase/server'
-import { spendEntrySchema, confirmPaymentSchema, type SpendEntryFormValues, type ConfirmPaymentValues } from '@/lib/schemas/spend'
-import { getLiveExchangeRate } from '@/lib/currency'
+import { spendEntrySchema, spendEntryInputSchema, confirmPaymentSchema, type SpendEntryFormValues, type SpendEntryInput, type ConfirmPaymentValues } from '@/lib/schemas/spend'
+import { getLiveExchangeRate, batchGetExchangeRates } from '@/lib/currency'
 import { advanceCycle, type SpendCycle } from '@/lib/spend-utils'
-import type { SpendRule } from '@/lib/types'
+import type { SpendRule, SpendRateStatus } from '@/lib/types'
 
 type Supabase = Awaited<ReturnType<typeof createClient>>
+
+/** Postgres unique_violation. A replayed write hitting its own row is success. */
+const DUPLICATE_KEY = '23505'
+
+/** A third-party FX API must never hold a user's expense hostage this long. */
+const RATE_TIMEOUT_MS = 2500
+
+/** Shapes accepted by syncOutbox — the wire form of the client's outbox. */
+type SyncMutation =
+  | { id: string; entityId: string; kind: 'entry.create'; input: SpendEntryInput }
+  | { id: string; entityId: string; kind: 'entry.update'; input: SpendEntryFormValues }
+  | { id: string; entityId: string; kind: 'entry.delete' }
+  | { id: string; entityId: string; kind: 'category.create'; name: string }
+
+interface SyncResultRow {
+  id: string
+  ok: boolean
+  terminal?: boolean
+  error?: string
+}
 
 function revalidateAll() {
   revalidatePath('/dashboard')
@@ -22,10 +42,40 @@ async function requireUser() {
   return { supabase, user }
 }
 
-async function rateFor(supabase: Supabase, userId: string, currency: string) {
+async function getBaseCurrency(supabase: Supabase, userId: string): Promise<string> {
   const { data: profile } = await supabase.from('profiles').select('base_currency').eq('id', userId).single()
-  const baseCurrency = profile?.base_currency || 'IDR'
-  return getLiveExchangeRate(currency, baseCurrency)
+  return profile?.base_currency || 'IDR'
+}
+
+/**
+ * Work out an entry's exchange rate without ever blocking the save.
+ *
+ * Three tiers, cheapest first:
+ *  1. same currency as the user's base — no HTTP at all (the common case)
+ *  2. a live rate, but only if it arrives inside RATE_TIMEOUT_MS
+ *  3. otherwise a provisional rate flagged 'pending', backfilled later
+ *
+ * This never throws. Losing an expense because a third-party FX API was slow
+ * is far worse than showing an approximate conversion for a few minutes.
+ */
+async function resolveRate(
+  supabase: Supabase,
+  userId: string,
+  currency: string,
+  fallback?: number
+): Promise<{ exchange_rate: number; rate_status: SpendRateStatus }> {
+  const baseCurrency = await getBaseCurrency(supabase, userId)
+  if (currency === baseCurrency) return { exchange_rate: 1, rate_status: 'resolved' }
+
+  try {
+    const rate = await getLiveExchangeRate(currency, baseCurrency, AbortSignal.timeout(RATE_TIMEOUT_MS))
+    return { exchange_rate: rate, rate_status: 'resolved' }
+  } catch {
+    return {
+      exchange_rate: fallback && fallback > 0 ? fallback : 1,
+      rate_status: 'pending',
+    }
+  }
 }
 
 async function getOwnedRule(supabase: Supabase, id: string, userId: string): Promise<SpendRule | null> {
@@ -99,24 +149,21 @@ export async function deleteSpendCategory(id: string) {
 
 // ---------- entries ----------
 
-export async function createSpendEntry(data: SpendEntryFormValues) {
+export async function createSpendEntry(data: SpendEntryInput) {
   const { supabase, user } = await requireUser()
   if (!user) return { error: 'Unauthorized' }
 
-  const parsed = spendEntrySchema.safeParse(data)
+  const parsed = spendEntryInputSchema.safeParse(data)
   if (!parsed.success) return { error: 'Invalid fields' }
   const v = parsed.data
 
-  let exchangeRate: number
-  try {
-    exchangeRate = await rateFor(supabase, user.id, v.currency)
-  } catch {
-    return { error: 'Unable to fetch exchange rate. Please try again.' }
-  }
+  const { exchange_rate, rate_status } = await resolveRate(supabase, user.id, v.currency, v.exchange_rate)
 
   let ruleId: string | null = null
   if (v.is_subscription && v.cycle) {
-    const { data: rule, error: ruleError } = await supabase.from('spend_rules').insert({
+    ruleId = v.rule_id ?? globalThis.crypto.randomUUID()
+    const { error: ruleError } = await supabase.from('spend_rules').insert({
+      id: ruleId,
       user_id: user.id,
       name: v.name,
       default_amount: parseFloat(v.amount),
@@ -126,28 +173,29 @@ export async function createSpendEntry(data: SpendEntryFormValues) {
       notes: v.notes || null,
       next_due: advanceCycle(v.spent_on, v.cycle),
       status: 'active',
-    }).select('id').single()
-    if (ruleError) return { error: ruleError.message }
-    ruleId = rule.id
+    })
+    // A replay finds the rule its own earlier attempt created. That's success.
+    if (ruleError && ruleError.code !== DUPLICATE_KEY) return { error: ruleError.message }
   }
 
   const { error } = await supabase.from('spend_entries').insert({
+    id: v.id,
     user_id: user.id,
     name: v.name,
     amount: parseFloat(v.amount),
     currency: v.currency,
-    exchange_rate: exchangeRate,
+    exchange_rate,
+    rate_status,
     category_id: v.category_id || null,
     notes: v.notes || null,
     spent_on: v.spent_on,
     rule_id: ruleId,
+    ...(v.created_at ? { created_at: v.created_at } : {}),
   })
-  if (error) {
-    if (ruleId) {
-      await supabase.from('spend_rules').delete().match({ id: ruleId, user_id: user.id })
-    }
-    return { error: error.message }
-  }
+  // The primary key is the idempotency key: flushing a queued create twice
+  // must leave exactly one row. Deliberately no compensating delete of the
+  // rule — on a retry that would destroy what the first attempt succeeded at.
+  if (error && error.code !== DUPLICATE_KEY) return { error: error.message }
 
   revalidateAll()
   return { success: true }
@@ -161,15 +209,16 @@ export async function updateSpendEntry(id: string, data: SpendEntryFormValues) {
   if (!parsed.success) return { error: 'Invalid fields' }
   const v = parsed.data
 
-  const { data: existing } = await supabase.from('spend_entries').select('rule_id, currency, exchange_rate').match({ id, user_id: user.id }).single()
+  const { data: existing } = await supabase.from('spend_entries').select('rule_id, currency, exchange_rate, rate_status').match({ id, user_id: user.id }).single()
 
   let exchangeRate = Number(existing?.exchange_rate ?? 1)
+  let rateStatus: SpendRateStatus = (existing?.rate_status as SpendRateStatus) ?? 'resolved'
   if (!existing || existing.currency !== v.currency) {
-    try {
-      exchangeRate = await rateFor(supabase, user.id, v.currency)
-    } catch {
-      return { error: 'Unable to fetch exchange rate. Please try again.' }
-    }
+    // A failed lookup keeps the edit rather than rejecting it; the rate is
+    // marked pending and picked up by the backfill sweep.
+    const resolved = await resolveRate(supabase, user.id, v.currency, exchangeRate)
+    exchangeRate = resolved.exchange_rate
+    rateStatus = resolved.rate_status
   }
 
   const { error } = await supabase.from('spend_entries').update({
@@ -177,6 +226,7 @@ export async function updateSpendEntry(id: string, data: SpendEntryFormValues) {
     amount: parseFloat(v.amount),
     currency: v.currency,
     exchange_rate: exchangeRate,
+    rate_status: rateStatus,
     category_id: v.category_id || null,
     notes: v.notes || null,
     spent_on: v.spent_on,
@@ -209,6 +259,128 @@ export async function deleteSpendEntry(id: string) {
   return { success: true }
 }
 
+/**
+ * Resolve the real exchange rate for entries that were saved without one.
+ *
+ * Cheap by construction: the partial index idx_spend_entries_rate_pending only
+ * contains the stragglers, and batchGetExchangeRates dedupes by source
+ * currency, so a backlog of twenty IDR expenses costs zero HTTP calls.
+ *
+ * Safe to call speculatively — it's a no-op when nothing is pending.
+ */
+export async function backfillPendingRates() {
+  const { supabase, user } = await requireUser()
+  if (!user) return { error: 'Unauthorized' }
+
+  const { data: pending, error } = await supabase
+    .from('spend_entries')
+    .select('id, currency')
+    .match({ user_id: user.id, rate_status: 'pending' })
+    .limit(200)
+  if (error) return { error: error.message }
+  if (!pending?.length) return { updated: 0 }
+
+  const baseCurrency = await getBaseCurrency(supabase, user.id)
+  const { rates } = await batchGetExchangeRates(pending.map((e) => e.currency), baseCurrency)
+
+  // One UPDATE per distinct currency rather than per row.
+  const idsByCurrency = new Map<string, string[]>()
+  for (const entry of pending) {
+    const ids = idsByCurrency.get(entry.currency)
+    if (ids) ids.push(entry.id)
+    else idsByCurrency.set(entry.currency, [entry.id])
+  }
+
+  let updated = 0
+  for (const [currency, ids] of idsByCurrency) {
+    const rate = rates[currency]
+    // Still unavailable — leave it pending and try again next time.
+    if (typeof rate !== 'number') continue
+
+    const { error: updateError } = await supabase
+      .from('spend_entries')
+      .update({ exchange_rate: rate, rate_status: 'resolved' })
+      .eq('user_id', user.id)
+      .in('id', ids)
+    if (!updateError) updated += ids.length
+  }
+
+  if (updated > 0) revalidateAll()
+  return { updated }
+}
+
+/**
+ * Flush a batch of queued client writes.
+ *
+ * Batched rather than N calls because the moment this runs — connectivity just
+ * returned, link still marginal — is exactly when per-call overhead and partial
+ * failures multiply. One auth check, one deduped FX pass, one revalidate, one
+ * round trip.
+ *
+ * Returns a per-item verdict so the client knows what to retry and what to
+ * surface. `terminal` means never retry.
+ */
+export async function syncOutbox(
+  mutations: SyncMutation[]
+): Promise<{ results: SyncResultRow[] }> {
+  const { supabase, user } = await requireUser()
+  // Not terminal: an expired session offline must keep its queue, not drop it.
+  if (!user) {
+    return { results: mutations.map((m) => ({ id: m.id, ok: false, error: 'Unauthorized' })) }
+  }
+
+  const results: SyncResultRow[] = []
+  let mutated = false
+
+  const record = (id: string, outcome: { error?: string; success?: boolean }) => {
+    if (outcome.error) {
+      // Only a validation failure is hopeless; everything else may yet succeed.
+      results.push({ id, ok: false, error: outcome.error, terminal: outcome.error === 'Invalid fields' })
+    } else {
+      results.push({ id, ok: true })
+      mutated = true
+    }
+  }
+
+  for (const mutation of mutations) {
+    try {
+      switch (mutation.kind) {
+        case 'entry.create':
+          record(mutation.id, await createSpendEntry(mutation.input))
+          break
+        case 'entry.update':
+          record(mutation.id, await updateSpendEntry(mutation.entityId, mutation.input))
+          break
+        case 'entry.delete':
+          record(mutation.id, await deleteSpendEntry(mutation.entityId))
+          break
+        case 'category.create': {
+          // id supplied so the entry referencing this category resolves.
+          const { error } = await supabase
+            .from('spend_categories')
+            .insert({ id: mutation.entityId, name: mutation.name.trim(), user_id: user.id })
+          record(mutation.id, error && error.code !== DUPLICATE_KEY ? { error: error.message } : {})
+          break
+        }
+      }
+    } catch (err) {
+      results.push({
+        id: mutation.id,
+        ok: false,
+        error: err instanceof Error ? err.message : 'Sync failed',
+      })
+    }
+  }
+
+  if (mutated) {
+    revalidateAll()
+    // Anything that landed without a real rate gets one now, while we're online.
+    void backfillPendingRates()
+  }
+
+  return { results }
+}
+
 // ---------- rule lifecycle ----------
 
 export async function confirmRulePayment(ruleId: string, data: ConfirmPaymentValues) {
@@ -221,12 +393,7 @@ export async function confirmRulePayment(ruleId: string, data: ConfirmPaymentVal
   const rule = await getOwnedRule(supabase, ruleId, user.id)
   if (!rule) return { error: 'Subscription not found' }
 
-  let exchangeRate: number
-  try {
-    exchangeRate = await rateFor(supabase, user.id, rule.default_currency)
-  } catch {
-    return { error: 'Unable to fetch exchange rate. Please try again.' }
-  }
+  const { exchange_rate, rate_status } = await resolveRate(supabase, user.id, rule.default_currency)
 
   const amount = parseFloat(parsed.data.amount)
   const { data: insertedEntry, error: insertError } = await supabase.from('spend_entries').insert({
@@ -234,7 +401,8 @@ export async function confirmRulePayment(ruleId: string, data: ConfirmPaymentVal
     name: rule.name,
     amount,
     currency: rule.default_currency,
-    exchange_rate: exchangeRate,
+    exchange_rate,
+    rate_status,
     category_id: rule.category_id,
     notes: null,
     spent_on: parsed.data.paid_date,

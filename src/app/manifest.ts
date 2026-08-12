@@ -5,7 +5,9 @@ export default function manifest(): MetadataRoute.Manifest {
     name: 'SubTrack',
     short_name: 'SubTrack',
     description: 'Track your subscriptions and see your true monthly cost.',
-    start_url: '/',
+    // Land on a route the service worker caches, so a cold offline launch of
+    // the installed app opens the dashboard instead of the network-error page.
+    start_url: '/dashboard',
     display: 'standalone',
     background_color: '#f3f6ec',
     theme_color: '#1c3210',

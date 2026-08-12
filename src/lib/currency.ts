@@ -5,7 +5,7 @@
  * No hardcoded rates — if both sources fail, an error is thrown.
  */
 
-async function fetchRatesFromBase(base: string): Promise<{
+async function fetchRatesFromBase(base: string, signal?: AbortSignal): Promise<{
   rates: Record<string, number> | null
   source: 'primary' | 'secondary' | null
 }> {
@@ -13,6 +13,7 @@ async function fetchRatesFromBase(base: string): Promise<{
   try {
     const res = await fetch(`https://open.er-api.com/v6/latest/${base}`, {
       next: { revalidate: 3600 },
+      signal,
     })
     if (res.ok) {
       const data = await res.json()
@@ -26,6 +27,7 @@ async function fetchRatesFromBase(base: string): Promise<{
   try {
     const res = await fetch(`https://api.frankfurter.app/latest?from=${base}`, {
       next: { revalidate: 3600 },
+      signal,
     })
     if (res.ok) {
       const data = await res.json()
@@ -42,11 +44,14 @@ async function fetchRatesFromBase(base: string): Promise<{
  * Fetch a single exchange rate.
  * Tries primary (open.er-api.com) then secondary (frankfurter.app).
  * Throws if both sources are unavailable.
+ *
+ * Pass a `signal` (e.g. `AbortSignal.timeout(2500)`) when this sits on a user's
+ * write path — a slow third-party API must never hold up saving an expense.
  */
-export async function getLiveExchangeRate(from: string, to: string): Promise<number> {
+export async function getLiveExchangeRate(from: string, to: string, signal?: AbortSignal): Promise<number> {
   if (from === to) return 1.0
 
-  const { rates } = await fetchRatesFromBase(from)
+  const { rates } = await fetchRatesFromBase(from, signal)
 
   if (rates && typeof rates[to] === 'number') {
     return rates[to]

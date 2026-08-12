@@ -23,6 +23,14 @@ export interface SpendRule {
   created_at: string
 }
 
+/**
+ * 'pending' means the entry was saved before its real exchange rate could be
+ * fetched (offline, or the FX API was slow). `exchange_rate` still holds a
+ * usable provisional value so every `amount * exchange_rate` read keeps
+ * working — only the display should treat the converted figure as approximate.
+ */
+export type SpendRateStatus = 'resolved' | 'pending'
+
 export interface SpendEntry {
   id: string
   user_id: string
@@ -30,6 +38,7 @@ export interface SpendEntry {
   amount: number
   currency: string
   exchange_rate: number
+  rate_status: SpendRateStatus
   category_id: string | null
   notes: string | null
   spent_on: string

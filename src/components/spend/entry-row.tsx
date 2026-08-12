@@ -5,6 +5,7 @@ import { Trash2, Loader2 } from 'lucide-react'
 import { Modal } from '@/components/ui/modal'
 import { EntryForm } from './entry-form'
 import { deleteSpendEntry } from '@/lib/actions/spend'
+import { useOutbox } from '@/components/offline/outbox-provider'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import type { ProcessedSpendEntry } from '@/lib/types'
@@ -12,6 +13,13 @@ import type { ProcessedSpendEntry } from '@/lib/types'
 interface EntryRowProps {
   entry: ProcessedSpendEntry
   baseCurrency: string
+  /**
+   * Set when this row has an unflushed local write.
+   * 'queued'  — waiting to sync; editing it would race the flush, so it's inert.
+   * 'failed'  — the server rejected it. The row stays visible on purpose:
+   *             a write we can't apply must never disappear silently.
+   */
+  pending?: 'queued' | 'failed'
 }
 
 function formatCurrency(amount: number, currency: string) {
@@ -23,10 +31,11 @@ function formatCurrency(amount: number, currency: string) {
   }).format(amount)
 }
 
-export function EntryRow({ entry, baseCurrency }: EntryRowProps) {
+export function EntryRow({ entry, baseCurrency, pending }: EntryRowProps) {
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
+  const outbox = useOutbox()
 
   function closeModal() {
     setIsEditOpen(false)
@@ -38,6 +47,29 @@ export function EntryRow({ entry, baseCurrency }: EntryRowProps) {
       setConfirmingDelete(true)
       return
     }
+    // Queue it rather than calling the server directly: a delete must work
+    // offline too, and the coalescer turns "created then deleted while offline"
+    // into nothing at all instead of a pointless round trip.
+    if (outbox) {
+      closeModal()
+      toast.success(`${entry.name} deleted.`)
+      void outbox.enqueue(
+        {
+          id: crypto.randomUUID(),
+          userId: entry.user_id,
+          entityId: entry.id,
+          kind: 'entry.delete',
+          createdAt: new Date().toISOString(),
+          attempts: 0,
+          nextAttemptAt: Date.now(),
+          lastError: null,
+          status: 'pending',
+        },
+        null
+      )
+      return
+    }
+
     setIsDeleting(true)
     const result = await deleteSpendEntry(entry.id)
     setIsDeleting(false)
@@ -54,8 +86,14 @@ export function EntryRow({ entry, baseCurrency }: EntryRowProps) {
     <>
       <button
         type="button"
-        onClick={() => setIsEditOpen(true)}
-        className="group w-full flex items-center gap-3 px-4 py-3.5 text-left hover:bg-[var(--muted)] transition-colors cursor-pointer"
+        onClick={() => { if (!pending) setIsEditOpen(true) }}
+        aria-disabled={pending ? true : undefined}
+        className={cn(
+          'group w-full flex items-center gap-3 px-4 py-3.5 text-left transition-colors',
+          pending
+            ? 'opacity-60 cursor-default'
+            : 'hover:bg-[var(--muted)] cursor-pointer'
+        )}
       >
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
@@ -65,6 +103,16 @@ export function EntryRow({ entry, baseCurrency }: EntryRowProps) {
             {entry.rule_id && (
               <span className="text-[9px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-full bg-[var(--accent)] text-[var(--primary)]">
                 Subscription
+              </span>
+            )}
+            {pending === 'queued' && (
+              <span className="text-[9px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-full bg-[var(--muted)] text-[var(--muted-foreground)]">
+                Queued
+              </span>
+            )}
+            {pending === 'failed' && (
+              <span className="text-[9px] font-semibold uppercase tracking-widest px-2 py-0.5 rounded-full bg-[var(--destructive)]/10 text-[var(--destructive)]">
+                Not synced
               </span>
             )}
           </div>
@@ -80,9 +128,17 @@ export function EntryRow({ entry, baseCurrency }: EntryRowProps) {
             {formatCurrency(entry.amount, entry.currency)}
           </div>
           {entry.currency !== baseCurrency && (
-            <div className="text-[11px] font-bold text-[var(--primary)] tabular-nums mt-0.5">
-              &asymp; {formatCurrency(entry.amountInBase, baseCurrency)}
-            </div>
+            entry.rate_status === 'pending' ? (
+              // Saved before a real rate could be fetched. Showing the
+              // provisional conversion would just be a confidently wrong number.
+              <div className="text-[11px] font-bold text-[var(--muted-foreground)] mt-0.5">
+                rate pending
+              </div>
+            ) : (
+              <div className="text-[11px] font-bold text-[var(--primary)] tabular-nums mt-0.5">
+                &asymp; {formatCurrency(entry.amountInBase, baseCurrency)}
+              </div>
+            )
           )}
         </div>
       </button>

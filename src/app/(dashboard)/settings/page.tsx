@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
-import { signOut } from '@/lib/actions/auth'
+import { SignOutButton } from '@/components/layout/sign-out-button'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import Link from 'next/link'
@@ -9,7 +9,6 @@ import {
   Tag,
   MessageSquare,
   CreditCard,
-  LogOut,
   ChevronRight,
   ShieldCheck,
   Download,
@@ -105,16 +104,7 @@ export default async function SettingsPage() {
 
         {/* Logout */}
         <div className="pt-4">
-          <form action={signOut}>
-            <button className="w-full flex items-center justify-between p-4 bg-[var(--destructive)]/5 text-[var(--destructive)] rounded-2xl group transition-all hover:bg-[var(--destructive)]/10">
-              <div className="flex items-center">
-                <div className="w-10 h-10 bg-[var(--destructive)]/10 rounded-xl flex items-center justify-center mr-4">
-                  <LogOut className="w-5 h-5" />
-                </div>
-                <span className="text-sm font-semibold uppercase tracking-widest">Sign Out</span>
-              </div>
-            </button>
-          </form>
+          <SignOutButton />
         </div>
       </div>
     </div>

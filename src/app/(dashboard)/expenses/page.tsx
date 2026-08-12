@@ -2,24 +2,17 @@ import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { format } from 'date-fns'
-import { EntryRow } from '@/components/spend/entry-row'
+import { EntryList } from '@/components/spend/entry-list'
 import { SubscriptionCard } from '@/components/spend/subscription-card'
 import { batchGetExchangeRates } from '@/lib/currency'
 import { monthlyEstimate } from '@/lib/spend-utils'
-import { parseLocalDate, toLocalDateString } from '@/lib/expense-utils'
+import { toLocalDateString } from '@/lib/expense-utils'
 import { cn } from '@/lib/utils'
 import type { SpendEntry, SpendRule, SpendCategory, ProcessedSpendEntry, SpendRuleStatus } from '@/lib/types'
 
 type View = 'all' | 'subscriptions'
 
 type SpendEntryRow = SpendEntry & { spend_categories: { name: string } | null }
-
-interface DaySection {
-  date: string
-  entries: ProcessedSpendEntry[]
-  total: number
-}
 
 interface RuleSection {
   key: SpendRuleStatus
@@ -89,7 +82,7 @@ export default async function ExpensesPage({
   const prevHref = `/expenses?month=${monthParamStr(month === 0 ? year - 1 : year, month === 0 ? 11 : month - 1)}`
   const nextHref = `/expenses?month=${monthParamStr(month === 11 ? year + 1 : year, month === 11 ? 0 : month + 1)}`
 
-  let daySections: DaySection[] = []
+  let entries: ProcessedSpendEntry[] = []
 
   if (view === 'all') {
     let query = supabase
@@ -105,7 +98,8 @@ export default async function ExpensesPage({
 
     const { data } = await query
     const rows = (data || []) as SpendEntryRow[]
-    const entries: ProcessedSpendEntry[] = rows.map((row) => {
+    // Grouping now happens in EntryList, after local pending rows are merged in.
+    entries = rows.map((row) => {
       const { spend_categories, ...entry } = row
       return {
         ...entry,
@@ -113,20 +107,6 @@ export default async function ExpensesPage({
         amountInBase: Number(entry.amount) * Number(entry.exchange_rate),
       }
     })
-
-    const byDate = new Map<string, ProcessedSpendEntry[]>()
-    for (const entry of entries) {
-      const list = byDate.get(entry.spent_on) ?? []
-      list.push(entry)
-      byDate.set(entry.spent_on, list)
-    }
-    daySections = [...byDate.entries()]
-      .sort((a, b) => (a[0] < b[0] ? 1 : -1))
-      .map(([date, dayEntries]) => ({
-        date,
-        entries: dayEntries,
-        total: dayEntries.reduce((sum, e) => sum + e.amountInBase, 0),
-      }))
   }
 
   let ruleSections: RuleSection[] = []
@@ -160,15 +140,17 @@ export default async function ExpensesPage({
       .filter((s) => s.rules.length > 0)
   }
 
-  const fmt = (amount: number) =>
-    new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: baseCurrency,
-      minimumFractionDigits: baseCurrency === 'IDR' ? 0 : 2,
-      maximumFractionDigits: baseCurrency === 'IDR' ? 0 : 2,
-    }).format(amount)
-
-  const isAllEmpty = view === 'all' && daySections.length === 0
+  const emptyState = (
+    <div className="flex flex-col items-center justify-center p-16 text-center bg-[var(--card)] rounded-2xl border border-[var(--border)]">
+      <div className="bg-[var(--background)] p-6 rounded-full mb-6">
+        <span className="text-4xl">💸</span>
+      </div>
+      <p className="text-[var(--foreground)] font-heading font-semibold text-xl mb-2">No expenses yet</p>
+      <p className="text-[var(--muted-foreground)] text-sm max-w-[240px] font-medium">
+        Log your first expense with the plus button.
+      </p>
+    </div>
+  )
 
   return (
     <div className="pb-24 font-sans text-[var(--foreground)]">
@@ -229,39 +211,14 @@ export default async function ExpensesPage({
             </div>
           )}
 
-          {isAllEmpty ? (
-            <div className="flex flex-col items-center justify-center p-16 text-center bg-[var(--card)] rounded-2xl border border-[var(--border)]">
-              <div className="bg-[var(--background)] p-6 rounded-full mb-6">
-                <span className="text-4xl">💸</span>
-              </div>
-              <p className="text-[var(--foreground)] font-heading font-semibold text-xl mb-2">No expenses yet</p>
-              <p className="text-[var(--muted-foreground)] text-sm max-w-[240px] font-medium">
-                Log your first expense with the plus button.
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-6">
-              {daySections.map((section) => (
-                <section key={section.date}>
-                  <div className="flex items-center gap-3 mb-3 px-1">
-                    <span className="text-[11px] font-semibold uppercase tracking-widest text-[var(--muted-foreground)]">
-                      {format(parseLocalDate(section.date), 'EEEE, MMM d')}
-                    </span>
-                    <div className="flex-1 h-px bg-[var(--border)] opacity-40" />
-                    <span className="text-[11px] font-bold text-[var(--foreground)] tabular-nums">
-                      {fmt(section.total)}
-                    </span>
-                  </div>
-
-                  <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
-                    {section.entries.map((entry) => (
-                      <EntryRow key={entry.id} entry={entry} baseCurrency={baseCurrency} />
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
+          <EntryList
+            entries={entries}
+            baseCurrency={baseCurrency}
+            windowStart={monthStart}
+            windowEnd={monthEnd}
+            categoryId={cat}
+            emptyState={emptyState}
+          />
         </>
       )}
 

@@ -4,10 +4,11 @@ import { useState, useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { format } from 'date-fns'
-import { spendEntrySchema, type SpendEntryFormValues } from '@/lib/schemas/spend'
+import { spendEntrySchema, type SpendEntryFormValues, type SpendEntryInput } from '@/lib/schemas/spend'
 import { createSpendEntry, updateSpendEntry, getSpendCategories, createSpendCategory } from '@/lib/actions/spend'
 import { advanceCycle, type SpendCycle } from '@/lib/spend-utils'
 import { toLocalDateString, parseLocalDate } from '@/lib/expense-utils'
+import { useOutbox } from '@/components/offline/outbox-provider'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -52,6 +53,7 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
   const [newCategoryName, setNewCategoryName] = useState('')
   const [isSavingCategory, setIsSavingCategory] = useState(false)
   const submittedRef = useRef(false)
+  const outbox = useOutbox()
 
   const {
     register,
@@ -127,10 +129,57 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
     // server round-trip. Fire the action in the background and reconcile via toast.
     if (submittedRef.current) return
     submittedRef.current = true
+
+    // Ids are minted here, not by Postgres. Re-sending this exact payload can
+    // then only ever produce one row, which is what makes a retry (or a queued
+    // offline write) safe to replay.
+    const input: SpendEntryInput = {
+      ...data,
+      id: crypto.randomUUID(),
+      rule_id: data.is_subscription ? crypto.randomUUID() : null,
+      created_at: new Date().toISOString(),
+    }
+
     reset()
     onSuccess?.()
+
+    if (outbox) {
+      // Queue it. The optimistic row paints from this call synchronously,
+      // before any network work, and survives a reload if we're offline.
+      const amount = parseFloat(input.amount)
+      void outbox.enqueue(
+        {
+          id: crypto.randomUUID(),
+          userId: '',
+          entityId: input.id,
+          kind: 'entry.create',
+          input,
+          createdAt: input.created_at!,
+          attempts: 0,
+          nextAttemptAt: Date.now(),
+          lastError: null,
+          status: 'pending',
+        },
+        {
+          ...input,
+          user_id: '',
+          amount,
+          category_id: input.category_id ?? null,
+          notes: input.notes ?? null,
+          rule_id: input.rule_id ?? null,
+          created_at: input.created_at!,
+          exchange_rate: 1,
+          rate_status: 'pending',
+          categoryName: categories.find((c) => c.id === input.category_id)?.name ?? null,
+          amountInBase: amount,
+          syncedAt: null,
+        }
+      )
+      return
+    }
+
     const toastId = toast.loading('Adding…')
-    createSpendEntry(data)
+    createSpendEntry(input)
       .then((result) => {
         if (result.error) {
           submittedRef.current = false

@@ -40,6 +40,7 @@ export async function GET(request: NextRequest) {
     'amount',
     'currency',
     'exchange_rate',
+    'rate_status',
     'amount_in_base',
     'category',
     'subscription',
@@ -54,6 +55,8 @@ export async function GET(request: NextRequest) {
       csvEscape(String(row.amount ?? '')),
       csvEscape(row.currency ?? ''),
       csvEscape(String(row.exchange_rate ?? '')),
+      // 'pending' means amount_in_base is an estimate, not a settled figure.
+      csvEscape(row.rate_status ?? 'resolved'),
       csvEscape(String(amountInBase)),
       csvEscape(row.spend_categories?.name ?? ''),
       csvEscape(row.spend_rules?.name ?? ''),
