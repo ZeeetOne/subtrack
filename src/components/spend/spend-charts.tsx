@@ -84,7 +84,7 @@ export function SpendCharts({ entries, monthlyTotals, baseCurrency }: SpendChart
   const doughnutOptions = {
     responsive: true,
     maintainAspectRatio: false,
-    cutout: '75%',
+    cutout: '0%',
     plugins: {
       legend: {
         position: 'right' as const,
