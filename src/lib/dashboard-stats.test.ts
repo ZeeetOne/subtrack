@@ -19,6 +19,7 @@ function entry(
     category_id: null,
     notes: null,
     spent_on,
+    spent_time: null,
     rule_id,
     created_at: `${spent_on}T09:00:00.000Z`,
     categoryName: null,

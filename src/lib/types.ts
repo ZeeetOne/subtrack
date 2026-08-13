@@ -42,6 +42,8 @@ export interface SpendEntry {
   category_id: string | null
   notes: string | null
   spent_on: string
+  /** 24-hour "HH:mm", or null when no time of day was recorded. */
+  spent_time: string | null
   rule_id: string | null
   created_at: string
 }

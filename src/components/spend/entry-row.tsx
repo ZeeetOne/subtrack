@@ -31,6 +31,15 @@ function formatCurrency(amount: number, currency: string) {
   }).format(amount)
 }
 
+/** "14:05" -> "2:05 PM". Falls back to the raw value if it's ever malformed. */
+function formatTime(time: string) {
+  const [h, m] = time.split(':').map(Number)
+  if (Number.isNaN(h) || Number.isNaN(m)) return time
+  const period = h >= 12 ? 'PM' : 'AM'
+  const hour12 = h % 12 || 12
+  return `${hour12}:${String(m).padStart(2, '0')} ${period}`
+}
+
 export function EntryRow({ entry, baseCurrency, pending }: EntryRowProps) {
   const [isEditOpen, setIsEditOpen] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
@@ -116,9 +125,9 @@ export function EntryRow({ entry, baseCurrency, pending }: EntryRowProps) {
               </span>
             )}
           </div>
-          {entry.categoryName && (
+          {(entry.categoryName || entry.spent_time) && (
             <span className="text-[10px] font-bold text-[var(--muted-foreground)] mt-0.5 block truncate">
-              {entry.categoryName}
+              {[entry.categoryName, entry.spent_time && formatTime(entry.spent_time)].filter(Boolean).join(' · ')}
             </span>
           )}
         </div>
@@ -154,6 +163,7 @@ export function EntryRow({ entry, baseCurrency, pending }: EntryRowProps) {
               amount: String(entry.amount),
               currency: entry.currency,
               spent_on: entry.spent_on,
+              spent_time: entry.spent_time || undefined,
               category_id: entry.category_id || undefined,
               notes: entry.notes || undefined,
               is_subscription: false,

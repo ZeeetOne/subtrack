@@ -11,3 +11,10 @@ export function toLocalDateString(date: Date): string {
   const d = String(date.getDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
 }
+
+/** Format a Date as HH:mm (24-hour) in local time. */
+export function toLocalTimeString(date: Date): string {
+  const h = String(date.getHours()).padStart(2, '0')
+  const min = String(date.getMinutes()).padStart(2, '0')
+  return `${h}:${min}`
+}

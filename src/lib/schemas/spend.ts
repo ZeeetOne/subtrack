@@ -15,11 +15,16 @@ const amountString = z.string().refine((val) => !isNaN(Number(val)) && Number(va
   message: "Amount must be a positive number",
 });
 
+// Optional: blank means "no time recorded", which is also what every entry
+// created before this field existed looks like.
+const spentTime = z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, { message: "Invalid time" }).optional().or(z.literal(''));
+
 export const spendEntrySchema = z.object({
   name: z.string().min(1, { message: "Name is required" }),
   amount: amountString,
   currency: z.string().min(1, { message: "Currency is required" }),
   spent_on: z.string().refine(dateNotFuture, { message: "Date cannot be in the future" }),
+  spent_time: spentTime,
   category_id: z.string().uuid().optional(),
   notes: z.string().max(500, "Notes must be under 500 characters").optional(),
   is_subscription: z.boolean(),
@@ -50,6 +55,7 @@ export const spendEntryInputSchema = z.object({
   amount: amountString,
   currency: z.string().min(1, { message: "Currency is required" }),
   spent_on: z.string().refine(dateNotFuture, { message: "Date cannot be in the future" }),
+  spent_time: spentTime,
   category_id: z.string().uuid().optional(),
   notes: z.string().max(500, "Notes must be under 500 characters").optional(),
   is_subscription: z.boolean(),

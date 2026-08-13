@@ -2,7 +2,12 @@ import { describe, it, expect } from 'vitest'
 import { groupByDay } from './spend-grouping'
 import type { ProcessedSpendEntry } from './types'
 
-function entry(id: string, spent_on: string, amountInBase: number): ProcessedSpendEntry {
+function entry(
+  id: string,
+  spent_on: string,
+  amountInBase: number,
+  spent_time: string | null = null
+): ProcessedSpendEntry {
   return {
     id,
     user_id: 'u1',
@@ -14,6 +19,7 @@ function entry(id: string, spent_on: string, amountInBase: number): ProcessedSpe
     category_id: null,
     notes: null,
     spent_on,
+    spent_time,
     rule_id: null,
     created_at: `${spent_on}T09:00:00.000Z`,
     categoryName: null,
@@ -50,6 +56,25 @@ describe('groupByDay', () => {
   it('totals in base currency, not the entered amount', () => {
     const converted = { ...entry('a', '2026-08-10', 0), amount: 5, amountInBase: 80_000 }
     expect(groupByDay([converted])[0].total).toBe(80_000)
+  })
+
+  it('sorts same-day entries by time of day, latest first', () => {
+    const sections = groupByDay([
+      entry('a', '2026-08-10', 1, '09:00'),
+      entry('b', '2026-08-10', 1, '18:45'),
+      entry('c', '2026-08-10', 1, '12:30'),
+    ])
+
+    expect(sections[0].entries.map((e) => e.id)).toEqual(['b', 'c', 'a'])
+  })
+
+  it('pushes entries with no recorded time to the end of the day', () => {
+    const sections = groupByDay([
+      entry('a', '2026-08-10', 1, null),
+      entry('b', '2026-08-10', 1, '09:00'),
+    ])
+
+    expect(sections[0].entries.map((e) => e.id)).toEqual(['b', 'a'])
   })
 
   it('sorts across month and year boundaries by string date', () => {

@@ -7,7 +7,7 @@ import { format } from 'date-fns'
 import { spendEntrySchema, type SpendEntryFormValues, type SpendEntryInput } from '@/lib/schemas/spend'
 import { createSpendEntry, updateSpendEntry, getSpendCategories, createSpendCategory } from '@/lib/actions/spend'
 import { advanceCycle, type SpendCycle } from '@/lib/spend-utils'
-import { toLocalDateString, parseLocalDate } from '@/lib/expense-utils'
+import { toLocalDateString, toLocalTimeString, parseLocalDate } from '@/lib/expense-utils'
 import { useOutbox } from '@/components/offline/outbox-provider'
 import { Input } from '@/components/ui/input'
 import { toast } from 'sonner'
@@ -67,6 +67,7 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
     defaultValues: initialData || {
       currency: 'IDR',
       spent_on: toLocalDateString(new Date()),
+      spent_time: toLocalTimeString(new Date()),
       is_subscription: false,
     },
   })
@@ -166,6 +167,7 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
           amount,
           category_id: input.category_id ?? null,
           notes: input.notes ?? null,
+          spent_time: input.spent_time || null,
           rule_id: input.rule_id ?? null,
           created_at: input.created_at!,
           exchange_rate: 1,
@@ -237,16 +239,29 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
         </div>
       </div>
 
-      {/* Date */}
-      <div>
-        <label className={labelClass}>Date</label>
-        <Input
-          type="date"
-          max={toLocalDateString(new Date())}
-          className={fieldClass}
-          {...register('spent_on')}
-        />
-        {errors.spent_on && <p className="text-[10px] text-[var(--destructive)] font-medium mt-1">{errors.spent_on.message}</p>}
+      {/* Date + Time */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className={labelClass}>Date</label>
+          <Input
+            type="date"
+            max={toLocalDateString(new Date())}
+            className={fieldClass}
+            {...register('spent_on')}
+          />
+          {errors.spent_on && <p className="text-[10px] text-[var(--destructive)] font-medium mt-1">{errors.spent_on.message}</p>}
+        </div>
+        <div>
+          <label className={labelClass}>
+            Time <span className="normal-case tracking-normal font-normal opacity-50">— optional</span>
+          </label>
+          <Input
+            type="time"
+            className={fieldClass}
+            {...register('spent_time')}
+          />
+          {errors.spent_time && <p className="text-[10px] text-[var(--destructive)] font-medium mt-1">{errors.spent_time.message}</p>}
+        </div>
       </div>
 
       {/* Category */}

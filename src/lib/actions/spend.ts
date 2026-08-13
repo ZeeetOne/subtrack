@@ -189,6 +189,7 @@ export async function createSpendEntry(data: SpendEntryInput) {
     category_id: v.category_id || null,
     notes: v.notes || null,
     spent_on: v.spent_on,
+    spent_time: v.spent_time || null,
     rule_id: ruleId,
     ...(v.created_at ? { created_at: v.created_at } : {}),
   })
@@ -230,6 +231,7 @@ export async function updateSpendEntry(id: string, data: SpendEntryFormValues) {
     category_id: v.category_id || null,
     notes: v.notes || null,
     spent_on: v.spent_on,
+    spent_time: v.spent_time || null,
   }).match({ id, user_id: user.id })
   if (error) return { error: error.message }
 

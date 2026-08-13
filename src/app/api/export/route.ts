@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
 
   const headers = [
     'date',
+    'time',
     'name',
     'amount',
     'currency',
@@ -51,6 +52,7 @@ export async function GET(request: NextRequest) {
     const amountInBase = Number(row.amount) * Number(row.exchange_rate)
     return [
       csvEscape(row.spent_on ?? ''),
+      csvEscape(row.spent_time ?? ''),
       csvEscape(row.name ?? ''),
       csvEscape(String(row.amount ?? '')),
       csvEscape(row.currency ?? ''),

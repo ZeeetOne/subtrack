@@ -50,6 +50,7 @@ function shadow(id = ENTRY): ShadowEntry {
     category_id: null,
     notes: null,
     spent_on: '2026-08-10',
+    spent_time: null,
     rule_id: null,
     created_at: '2026-08-10T09:00:00.000Z',
     categoryName: null,
