@@ -5,6 +5,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { EntryList } from '@/components/spend/entry-list'
 import { SubscriptionCard } from '@/components/spend/subscription-card'
 import { batchGetExchangeRates } from '@/lib/currency'
+import { getCurrentUserId } from '@/lib/current-user'
 import { monthlyEstimate } from '@/lib/spend-utils'
 import { toLocalDateString } from '@/lib/expense-utils'
 import { cn } from '@/lib/utils'
@@ -39,27 +40,20 @@ export default async function ExpensesPage({
 }) {
   const supabase = await createClient()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) redirect('/login')
+  // Already verified by middleware; re-checking would cost another round trip.
+  const userId = await getCurrentUserId()
+  if (!userId) redirect('/login')
 
   const { view: viewParam, month: monthParam, cat } = await searchParams
   const view: View = viewParam === 'subscriptions' ? 'subscriptions' : 'all'
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('base_currency')
-    .eq('id', user.id)
-    .single()
-  const baseCurrency = profile?.base_currency || 'IDR'
+  // Independent queries — one round trip instead of two.
+  const [{ data: profile }, { data: categoriesData }] = await Promise.all([
+    supabase.from('profiles').select('base_currency').eq('id', userId).single(),
+    supabase.from('spend_categories').select('*').eq('user_id', userId).order('name'),
+  ])
 
-  const { data: categoriesData } = await supabase
-    .from('spend_categories')
-    .select('*')
-    .eq('user_id', user.id)
-    .order('name')
+  const baseCurrency = profile?.base_currency || 'IDR'
   const categories = (categoriesData || []) as SpendCategory[]
   const categoryNameById = new Map(categories.map((c) => [c.id, c.name]))
 
@@ -88,7 +82,7 @@ export default async function ExpensesPage({
     let query = supabase
       .from('spend_entries')
       .select('*, spend_categories(name)')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .gte('spent_on', monthStart)
       .lte('spent_on', monthEnd)
       .order('spent_on', { ascending: false })
@@ -117,7 +111,7 @@ export default async function ExpensesPage({
     const { data: rulesData } = await supabase
       .from('spend_rules')
       .select('*')
-      .eq('user_id', user.id)
+      .eq('user_id', userId)
       .order('next_due', { ascending: true })
     const rules = (rulesData || []) as SpendRule[]
     subscriptionsEmpty = rules.length === 0

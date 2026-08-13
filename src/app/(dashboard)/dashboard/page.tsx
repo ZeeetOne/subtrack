@@ -1,14 +1,16 @@
+import { Suspense } from 'react'
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
+import { Skeleton } from '@/components/ui/skeleton'
 import { subMonths, format } from 'date-fns'
 import { CalendarClock, History, ChevronLeft, ChevronRight } from 'lucide-react'
 import { DueCard } from '@/components/spend/due-card'
 import { EntryList } from '@/components/spend/entry-list'
 import { DashboardStats } from '@/components/dashboard/dashboard-stats'
 import { SyncStatus } from '@/components/offline/sync-status'
-import { batchGetExchangeRates } from '@/lib/currency'
-import { monthlyEstimate } from '@/lib/spend-utils'
+import { getCurrentUserId } from '@/lib/current-user'
+import { buildSubscriptionEstimate, type SubscriptionEstimate } from '@/lib/subscription-estimate'
 import { parseLocalDate, toLocalDateString } from '@/lib/expense-utils'
 import type { SpendEntry, SpendRule, ProcessedSpendEntry } from '@/lib/types'
 
@@ -23,6 +25,65 @@ function formatCurrency(amount: number, currency: string) {
   }).format(amount)
 }
 
+/**
+ * Upcoming subscriptions with amounts converted to base currency.
+ *
+ * Separated out because converting needs exchange rates, and that call goes to
+ * a third-party API. As its own async component behind Suspense, a slow rate
+ * lookup delays this list alone instead of the whole dashboard.
+ */
+async function UpcomingRules({
+  rules,
+  baseCurrency,
+  estimate,
+}: {
+  rules: SpendRule[]
+  baseCurrency: string
+  estimate: Promise<SubscriptionEstimate>
+}) {
+  if (rules.length === 0) {
+    return (
+      <p className="text-sm text-[var(--muted-foreground)] font-medium px-1">
+        No subscriptions due in the next 30 days.
+      </p>
+    )
+  }
+
+  const { rates } = await estimate
+
+  return (
+    <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
+      {rules.map((rule) => {
+        const rate = rates[rule.default_currency]
+        const converted = rate == null ? null : rule.default_amount * rate
+        return (
+          <div key={rule.id} className="flex items-center gap-3 px-4 py-3.5">
+            <div className="flex-1 min-w-0">
+              <p className="font-heading font-semibold text-[15px] tracking-tight text-[var(--foreground)] truncate">
+                {rule.name}
+              </p>
+              <p className="text-[11px] font-semibold text-[var(--muted-foreground)] mt-0.5">
+                Due {format(parseLocalDate(rule.next_due), 'MMM d, yyyy')}
+              </p>
+            </div>
+            <div className="text-right flex-shrink-0">
+              {converted !== null ? (
+                <span className="text-[15px] font-heading font-semibold text-[var(--foreground)] tracking-tight tabular-nums">
+                  &asymp; {formatCurrency(converted, baseCurrency)}
+                </span>
+              ) : (
+                <span className="text-[11px] text-[var(--muted-foreground)] font-medium">
+                  rate unavailable
+                </span>
+              )}
+            </div>
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 export default async function DashboardPage({
   searchParams,
 }: {
@@ -30,21 +91,12 @@ export default async function DashboardPage({
 }) {
   const supabase = await createClient()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
+  // Verified by middleware and passed down as a header — avoids a second
+  // round trip to Supabase Auth on every page load.
+  const userId = await getCurrentUserId()
+  if (!userId) {
     redirect('/login')
   }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('base_currency')
-    .eq('id', user.id)
-    .single()
-
-  const baseCurrency = profile?.base_currency || 'IDR'
 
   // Month window: ?month=YYYY-MM, defaults to the current month
   const { month: monthParam } = await searchParams
@@ -76,15 +128,27 @@ export default async function DashboardPage({
   const sixMonthStartDate = subMonths(monthStartDate, 5)
   const sixMonthStart = toLocalDateString(sixMonthStartDate)
 
-  const { data: entriesData } = await supabase
-    .from('spend_entries')
-    .select('*, spend_categories(name)')
-    .eq('user_id', user.id)
-    .gte('spent_on', sixMonthStart)
-    .lte('spent_on', monthEnd)
-    .order('spent_on', { ascending: false })
-    .order('created_at', { ascending: false })
+  // These three don't depend on each other's results, so they go together.
+  // Sequentially they cost three round trips; in parallel they cost one.
+  const [{ data: profile }, { data: entriesData }, { data: rulesData }] = await Promise.all([
+    supabase.from('profiles').select('base_currency').eq('id', userId).single(),
+    supabase
+      .from('spend_entries')
+      .select('*, spend_categories(name)')
+      .eq('user_id', userId)
+      .gte('spent_on', sixMonthStart)
+      .lte('spent_on', monthEnd)
+      .order('spent_on', { ascending: false })
+      .order('created_at', { ascending: false }),
+    supabase
+      .from('spend_rules')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .order('next_due', { ascending: true }),
+  ])
 
+  const baseCurrency = profile?.base_currency || 'IDR'
   const sixMonthRows = (entriesData || []) as SpendEntryRow[]
   const sixMonthEntries: ProcessedSpendEntry[] = sixMonthRows.map((row) => {
     const { spend_categories, ...entry } = row
@@ -109,31 +173,17 @@ export default async function DashboardPage({
     })
   }
 
-  // Active subscription rules
-  const { data: rulesData } = await supabase
-    .from('spend_rules')
-    .select('*')
-    .eq('user_id', user.id)
-    .eq('status', 'active')
-    .order('next_due', { ascending: true })
-
   const activeRules = (rulesData || []) as SpendRule[]
 
-  const uniqueRuleCurrencies = [...new Set(activeRules.map((r) => r.default_currency))]
-  const { rates: ruleRates, usingSecondary, unavailablePairs } = await batchGetExchangeRates(
-    uniqueRuleCurrencies,
-    baseCurrency
-  )
+  // Deliberately NOT awaited. This calls a free third-party FX API; awaiting it
+  // meant a slow or down provider held up the entire dashboard. The promise is
+  // handed to DashboardStats, which resolves it inside a Suspense boundary so
+  // only the one stat card waits.
+  const subscriptionEstimate = buildSubscriptionEstimate(activeRules, baseCurrency)
 
   const in30Days = toLocalDateString(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 30))
   const dueRules = activeRules.filter((r) => r.next_due <= todayStr)
   const upcomingRules = activeRules.filter((r) => r.next_due > todayStr && r.next_due <= in30Days)
-
-  const estMonthlySubscriptions = activeRules.reduce((sum, r) => {
-    const rate = ruleRates[r.default_currency]
-    if (rate == null) return sum
-    return sum + monthlyEstimate(r.default_amount, r.cycle) * rate
-  }, 0)
 
   return (
     <div className="pb-24 font-sans">
@@ -168,23 +218,8 @@ export default async function DashboardPage({
         </div>
       </div>
 
-      {/* Rate source warnings (subscription estimates only) */}
-      {unavailablePairs.length > 0 && (
-        <div className="flex items-start gap-3 p-4 rounded-2xl bg-[var(--tertiary-container)] border border-[var(--tertiary)]/20 mb-6">
-          <span className="text-[var(--tertiary)] mt-0.5 text-sm shrink-0">⚠</span>
-          <p className="text-xs font-medium text-[var(--on-tertiary-container)] leading-relaxed">
-            Live rates unavailable for <strong>{unavailablePairs.join(', ')}</strong>. Subscription estimates in these currencies are excluded. Both rate sources are unreachable.
-          </p>
-        </div>
-      )}
-      {usingSecondary && unavailablePairs.length === 0 && (
-        <div className="flex items-start gap-3 p-4 rounded-2xl bg-[var(--muted)] border border-[var(--border)] mb-6">
-          <span className="text-[var(--muted-foreground)] mt-0.5 text-sm shrink-0">ℹ</span>
-          <p className="text-xs font-medium text-[var(--muted-foreground)] leading-relaxed">
-            Using Frankfurter (ECB) as rate source for subscription estimates — primary source is currently unavailable.
-          </p>
-        </div>
-      )}
+      {/* Rate-source warnings now live inside DashboardStats, behind the same
+          Suspense boundary as the figures they describe. */}
 
       <div className="space-y-12">
         {/* Due confirmations */}
@@ -219,7 +254,7 @@ export default async function DashboardPage({
           sixMonthStart={sixMonthStart}
           monthBuckets={monthBuckets}
           baseCurrency={baseCurrency}
-          estMonthlySubscriptions={estMonthlySubscriptions}
+          subscriptionEstimate={subscriptionEstimate}
           monthLabel={monthLabel}
           year={year}
           month={month}
@@ -240,37 +275,13 @@ export default async function DashboardPage({
             </span>
           </div>
 
-          {upcomingRules.length > 0 ? (
-            <div className="bg-[var(--card)] border border-[var(--border)] rounded-2xl overflow-hidden divide-y divide-[var(--border)]">
-              {upcomingRules.map((rule) => {
-                const rate = ruleRates[rule.default_currency]
-                const estimate = rate == null ? null : rule.default_amount * rate
-                return (
-                  <div key={rule.id} className="flex items-center gap-3 px-4 py-3.5">
-                    <div className="flex-1 min-w-0">
-                      <p className="font-heading font-semibold text-[15px] tracking-tight text-[var(--foreground)] truncate">
-                        {rule.name}
-                      </p>
-                      <p className="text-[11px] font-semibold text-[var(--muted-foreground)] mt-0.5">
-                        Due {format(parseLocalDate(rule.next_due), 'MMM d, yyyy')}
-                      </p>
-                    </div>
-                    <div className="text-right flex-shrink-0">
-                      {estimate !== null ? (
-                        <span className="text-[15px] font-heading font-semibold text-[var(--foreground)] tracking-tight tabular-nums">
-                          &asymp; {formatCurrency(estimate, baseCurrency)}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] text-[var(--muted-foreground)] font-medium">rate unavailable</span>
-                      )}
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
-          ) : (
-            <p className="text-sm text-[var(--muted-foreground)] font-medium px-1">No subscriptions due in the next 30 days.</p>
-          )}
+          <Suspense fallback={<Skeleton className="h-24 w-full rounded-2xl" />}>
+            <UpcomingRules
+              rules={upcomingRules}
+              baseCurrency={baseCurrency}
+              estimate={subscriptionEstimate}
+            />
+          </Suspense>
         </div>
 
         {/* Recent entries */}

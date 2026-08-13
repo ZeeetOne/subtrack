@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
+import { getCurrentUserId } from '@/lib/current-user'
 import { redirect } from 'next/navigation'
 import { subMonths } from 'date-fns'
 import { TrendingUp, Calendar, Layers, Repeat, Receipt } from 'lucide-react'
@@ -27,21 +28,11 @@ function formatCurrency(amount: number, currency: string) {
 export default async function StatsPage() {
   const supabase = await createClient()
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
-
-  if (!user) {
+  // Already verified by middleware; re-checking would cost another round trip.
+  const userId = await getCurrentUserId()
+  if (!userId) {
     redirect('/login')
   }
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('base_currency')
-    .eq('id', user.id)
-    .single()
-
-  const baseCurrency = profile?.base_currency || 'IDR'
 
   // 12-month window ending at the current month — one query covers the
   // month-over-month chart, this month's category breakdown, and the
@@ -53,14 +44,19 @@ export default async function StatsPage() {
   const twelveMonthStart = toLocalDateString(twelveMonthStartDate)
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
-  const { data: entriesData } = await supabase
-    .from('spend_entries')
-    .select('*, spend_categories(name)')
-    .eq('user_id', user.id)
-    .gte('spent_on', twelveMonthStart)
-    .lte('spent_on', monthEnd)
-    .order('spent_on', { ascending: false })
+  // Independent queries — one round trip instead of two.
+  const [{ data: profile }, { data: entriesData }] = await Promise.all([
+    supabase.from('profiles').select('base_currency').eq('id', userId).single(),
+    supabase
+      .from('spend_entries')
+      .select('*, spend_categories(name)')
+      .eq('user_id', userId)
+      .gte('spent_on', twelveMonthStart)
+      .lte('spent_on', monthEnd)
+      .order('spent_on', { ascending: false }),
+  ])
 
+  const baseCurrency = profile?.base_currency || 'IDR'
   const rows = (entriesData || []) as SpendEntryRow[]
 
   // Base conversion always uses the stored rate captured at entry time —
