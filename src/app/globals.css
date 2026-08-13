@@ -106,3 +106,19 @@
 .animate-float {
   animation: float 4s ease-in-out infinite;
 }
+
+/* Horizontally scrollable rows (category chips, etc.) — draggable/swipeable
+   with no visible scrollbar, and a soft edge fade hinting there's more to
+   scroll to. scrollbarWidth covers Firefox; the pseudo-element covers
+   WebKit/Blink (Chrome, Safari, Edge). */
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.scroll-fade-x {
+  -webkit-mask-image: linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent);
+  mask-image: linear-gradient(to right, transparent, black 20px, black calc(100% - 20px), transparent);
+}

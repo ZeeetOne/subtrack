@@ -189,7 +189,7 @@ export default async function ExpensesPage({
 
           {/* Category filter chips */}
           {categories.length > 0 && (
-            <div className="mb-6 px-1 flex gap-2 overflow-x-auto pb-0.5" style={{ scrollbarWidth: 'none' }}>
+            <div className="mb-6 px-1 flex gap-2 overflow-x-auto pb-0.5 no-scrollbar scroll-fade-x">
               <Link href={`/expenses?month=${currentMonthParam}`} className={cn('flex-none', pillClass(!cat))}>
                 All categories
               </Link>
