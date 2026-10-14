@@ -126,14 +126,12 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
       return
     }
 
-    // Create mode: instant optimistic close — the modal shouldn't wait on the
-    // server round-trip. Fire the action in the background and reconcile via toast.
+    // Create mode. Ids are minted here, not by Postgres. Re-sending this exact
+    // payload can then only ever produce one row, which is what makes a retry
+    // (or a queued offline write) safe to replay.
     if (submittedRef.current) return
     submittedRef.current = true
 
-    // Ids are minted here, not by Postgres. Re-sending this exact payload can
-    // then only ever produce one row, which is what makes a retry (or a queued
-    // offline write) safe to replay.
     const input: SpendEntryInput = {
       ...data,
       id: crypto.randomUUID(),
@@ -141,12 +139,38 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
       created_at: new Date().toISOString(),
     }
 
-    reset()
-    onSuccess?.()
+    // Online: insert straight into the database and wait for it, so the row
+    // shown is the real one. The button shows a spinner meanwhile.
+    if (typeof navigator === 'undefined' || navigator.onLine) {
+      setIsLoading(true)
+      try {
+        const result = await createSpendEntry(input)
+        if (result.error) {
+          // Keep the form (and what the user typed) so they can fix and retry.
+          submittedRef.current = false
+          setIsLoading(false)
+          toast.error(result.error)
+          return
+        }
+        toast.success('Expense added!')
+        reset()
+        setIsLoading(false)
+        submittedRef.current = false
+        onSuccess?.()
+        return
+      } catch {
+        // Network died mid-request. The write may or may not have landed, but
+        // the id makes replaying it harmless, so fall through to the queue.
+        setIsLoading(false)
+      }
+    }
 
+    // Offline (or the request failed in transit): queue it. The optimistic row
+    // paints from this call synchronously and survives a reload.
     if (outbox) {
-      // Queue it. The optimistic row paints from this call synchronously,
-      // before any network work, and survives a reload if we're offline.
+      reset()
+      onSuccess?.()
+      submittedRef.current = false
       const amount = parseFloat(input.amount)
       void outbox.enqueue(
         {
@@ -177,23 +201,12 @@ export function EntryForm({ onSuccess, onCancel, initialData }: EntryFormProps) 
           syncedAt: null,
         }
       )
+      toast.info("You're offline — saved on this device and will sync later.")
       return
     }
 
-    const toastId = toast.loading('Adding…')
-    createSpendEntry(input)
-      .then((result) => {
-        if (result.error) {
-          submittedRef.current = false
-          toast.error(result.error, { id: toastId })
-        } else {
-          toast.success('Expense added!', { id: toastId })
-        }
-      })
-      .catch(() => {
-        submittedRef.current = false
-        toast.error('Something went wrong. Please try again.', { id: toastId })
-      })
+    submittedRef.current = false
+    toast.error('Could not reach the server. Please try again.')
   }
 
   return (
