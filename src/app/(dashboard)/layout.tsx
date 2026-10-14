@@ -16,7 +16,7 @@ export default function DashboardLayout({
       {/* Wraps children AND the FAB: the form that enqueues and the list that
           renders the optimistic row must share one outbox. */}
       <OutboxProvider>
-        <div className="flex-1 flex flex-col min-h-screen relative pb-24 md:pb-0 font-sans">
+        <div className="flex-1 min-w-0 flex flex-col min-h-screen relative pb-24 md:pb-0 font-sans">
           <main className="max-w-3xl mx-auto w-full px-4 sm:px-6 py-12">
             {children}
           </main>
