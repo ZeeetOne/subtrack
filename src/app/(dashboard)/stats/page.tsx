@@ -1,10 +1,12 @@
 import { createClient } from '@/lib/supabase/server'
 import { getCurrentUserId } from '@/lib/current-user'
 import { redirect } from 'next/navigation'
-import { subMonths } from 'date-fns'
+import { subMonths, subDays } from 'date-fns'
 import { TrendingUp, Calendar, Layers, Repeat, Receipt } from 'lucide-react'
 import { StatsMonthlyChart } from '@/components/spend/stats-monthly-chart'
+import { StatsRangeSection } from '@/components/spend/stats-range-section'
 import { toLocalDateString } from '@/lib/expense-utils'
+import { parseRange, summarizeRange, escapeLike, UNCATEGORIZED } from '@/lib/stats-range'
 import type { SpendEntry, ProcessedSpendEntry } from '@/lib/types'
 
 type SpendEntryRow = SpendEntry & { spend_categories: { name: string } | null }
@@ -25,7 +27,14 @@ function formatCurrency(amount: number, currency: string) {
   }).format(amount)
 }
 
-export default async function StatsPage() {
+const RANGE_PAGE_SIZE = 1000
+const RANGE_MAX_ROWS = 5000
+
+export default async function StatsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ from?: string; to?: string; cat?: string; q?: string }>
+}) {
   const supabase = await createClient()
 
   // Already verified by middleware; re-checking would cost another round trip.
@@ -44,9 +53,16 @@ export default async function StatsPage() {
   const twelveMonthStart = toLocalDateString(twelveMonthStartDate)
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
 
-  // Independent queries — one round trip instead of two.
-  const [{ data: profile }, { data: entriesData }] = await Promise.all([
+  const { from: fromParam, to: toParam, cat: catParam, q: qParam } = await searchParams
+  const range = parseRange(fromParam, toParam)
+  const rangeRequested = Boolean(fromParam || toParam)
+  const catFilter = catParam || ''
+  const queryFilter = (qParam ?? '').trim().slice(0, 100)
+
+  // Independent queries — one round trip instead of three.
+  const [{ data: profile }, { data: categoriesData }, { data: entriesData }] = await Promise.all([
     supabase.from('profiles').select('base_currency').eq('id', userId).single(),
+    supabase.from('spend_categories').select('id, name').eq('user_id', userId).order('name'),
     supabase
       .from('spend_entries')
       .select('*, spend_categories(name)')
@@ -58,6 +74,53 @@ export default async function StatsPage() {
 
   const baseCurrency = profile?.base_currency || 'IDR'
   const rows = (entriesData || []) as SpendEntryRow[]
+  const categories = (categoriesData || []) as { id: string; name: string }[]
+
+  // ── Custom range ─────────────────────────────────────────────────────────
+  // Paged, because Supabase silently caps a single response (1000 rows by
+  // default) and a quietly truncated total would be a wrong number.
+  let rangeEntries: ProcessedSpendEntry[] = []
+  let rangeTruncated = false
+  if (range) {
+    const fetched: SpendEntryRow[] = []
+    for (let offset = 0; offset < RANGE_MAX_ROWS; offset += RANGE_PAGE_SIZE) {
+      let q = supabase
+        .from('spend_entries')
+        .select('*, spend_categories(name)')
+        .eq('user_id', userId)
+        .gte('spent_on', range.from)
+        .lte('spent_on', range.to)
+        .order('spent_on', { ascending: false })
+        .order('id')
+        .range(offset, offset + RANGE_PAGE_SIZE - 1)
+      if (catFilter === UNCATEGORIZED) q = q.is('category_id', null)
+      else if (catFilter) q = q.eq('category_id', catFilter)
+      if (queryFilter) q = q.ilike('name', `%${escapeLike(queryFilter)}%`)
+
+      const { data } = await q
+      const page = (data || []) as SpendEntryRow[]
+      fetched.push(...page)
+      if (page.length < RANGE_PAGE_SIZE) break
+      if (offset + RANGE_PAGE_SIZE >= RANGE_MAX_ROWS) rangeTruncated = true
+    }
+    rangeEntries = fetched.map((row) => {
+      const { spend_categories, ...entry } = row
+      return {
+        ...entry,
+        categoryName: spend_categories?.name ?? null,
+        amountInBase: Number(entry.amount) * Number(entry.exchange_rate),
+      }
+    })
+  }
+  const rangeSummary = range
+    ? summarizeRange(rangeEntries, range, { categoryId: catFilter || undefined, query: queryFilter })
+    : null
+  const todayStr = toLocalDateString(now)
+  const rangePresets = [
+    { label: 'Last 7 days', from: toLocalDateString(subDays(now, 6)), to: todayStr },
+    { label: 'Last 30 days', from: toLocalDateString(subDays(now, 29)), to: todayStr },
+    { label: 'This year', from: `${now.getFullYear()}-01-01`, to: todayStr },
+  ]
 
   // Base conversion always uses the stored rate captured at entry time —
   // never a live rate — since these are actuals, not projections.
@@ -138,6 +201,17 @@ export default async function StatsPage() {
           <span className="text-[11px] text-[var(--muted-foreground)] font-medium">entries this month</span>
         </div>
       </div>
+
+      <StatsRangeSection
+        baseCurrency={baseCurrency}
+        categories={categories}
+        presets={rangePresets}
+        values={{ from: fromParam ?? '', to: toParam ?? '', cat: catFilter, q: queryFilter }}
+        range={range}
+        summary={rangeSummary}
+        truncated={rangeTruncated}
+        invalid={rangeRequested && !range}
+      />
 
       {/* Metric Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-8">
