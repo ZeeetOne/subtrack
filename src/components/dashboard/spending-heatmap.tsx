@@ -1,8 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import Link from 'next/link'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { MonthSwitcher, MonthPending } from '@/components/layout/month-nav'
 import { cn } from '@/lib/utils'
 
 // Ordinal ramp validated with the palette validator (2:1+ light end vs white,
@@ -22,24 +21,18 @@ export interface HeatmapDay {
 }
 
 interface SpendingHeatmapProps {
-  monthLabel: string
   year: number
   month: number // 0-indexed
   days: HeatmapDay[]
   baseCurrency: string
-  prevHref: string
-  nextHref: string
   todayStr: string
 }
 
 export function SpendingHeatmap({
-  monthLabel,
   year,
   month,
   days,
   baseCurrency,
-  prevHref,
-  nextHref,
   todayStr,
 }: SpendingHeatmapProps) {
   const [selected, setSelected] = useState<string | null>(null)
@@ -80,27 +73,14 @@ export function SpendingHeatmap({
         <h2 className="text-[11px] font-semibold text-[var(--muted-foreground)] uppercase tracking-widest">
           Spending Calendar
         </h2>
-        <div className="flex items-center gap-1">
-          <Link
-            href={prevHref}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-            aria-label="Previous month"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Link>
-          <span className="text-[12px] font-bold text-[var(--foreground)] min-w-[110px] text-center tabular-nums">
-            {monthLabel}
-          </span>
-          <Link
-            href={nextHref}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-            aria-label="Next month"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Link>
-        </div>
+        <MonthSwitcher
+          className="flex items-center gap-1"
+          buttonClassName="w-7 h-7 rounded-lg"
+          labelClassName="text-[12px] min-w-[110px]"
+        />
       </div>
 
+      <MonthPending>
       {/* Weekday header */}
       <div className="grid grid-cols-7 gap-1.5 mb-1.5">
         {['M', 'T', 'W', 'T', 'F', 'S', 'S'].map((d, i) => (
@@ -153,6 +133,8 @@ export function SpendingHeatmap({
         ))}
         <span className="text-[10px] font-medium text-[var(--muted-foreground)]">More</span>
       </div>
+
+      </MonthPending>
 
       {/* Selected day detail */}
       {selectedDay && (

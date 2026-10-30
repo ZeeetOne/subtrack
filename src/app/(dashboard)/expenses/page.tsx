@@ -1,8 +1,8 @@
 import { createClient } from '@/lib/supabase/server'
 import { redirect } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { EntryList } from '@/components/spend/entry-list'
+import { MonthNavProvider, MonthSwitcher, MonthPending } from '@/components/layout/month-nav'
 import { SubscriptionCard } from '@/components/spend/subscription-card'
 import { batchGetExchangeRates } from '@/lib/currency'
 import { getCurrentUserId } from '@/lib/current-user'
@@ -73,8 +73,6 @@ export default async function ExpensesPage({
   const monthLabel = new Date(year, month, 1).toLocaleString('default', { month: 'long', year: 'numeric' })
   const monthParamStr = (y: number, m: number) => `${y}-${String(m + 1).padStart(2, '0')}`
   const currentMonthParam = monthParamStr(year, month)
-  const prevHref = `/expenses?month=${monthParamStr(month === 0 ? year - 1 : year, month === 0 ? 11 : month - 1)}`
-  const nextHref = `/expenses?month=${monthParamStr(month === 11 ? year + 1 : year, month === 11 ? 0 : month + 1)}`
 
   let entries: ProcessedSpendEntry[] = []
 
@@ -167,53 +165,43 @@ export default async function ExpensesPage({
       </div>
 
       {view === 'all' && (
-        <>
+        <MonthNavProvider basePath="/expenses" year={year} month={month} monthLabel={monthLabel}>
           {/* Month switcher */}
-          <div className="mb-4 px-1 flex items-center justify-between">
-            <Link
-              href={prevHref}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-              aria-label="Previous month"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </Link>
-            <span className="text-[13px] font-bold text-[var(--foreground)] tabular-nums">{monthLabel}</span>
-            <Link
-              href={nextHref}
-              className="w-8 h-8 rounded-lg flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-              aria-label="Next month"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </Link>
-          </div>
-
-          {/* Category filter chips */}
-          {categories.length > 0 && (
-            <div className="mb-6 px-1 flex gap-2 overflow-x-auto pb-0.5 no-scrollbar scroll-fade-x">
-              <Link href={`/expenses?month=${currentMonthParam}`} className={cn('flex-none', pillClass(!cat))}>
-                All categories
-              </Link>
-              {categories.map((c) => (
-                <Link
-                  key={c.id}
-                  href={`/expenses?month=${currentMonthParam}&cat=${c.id}`}
-                  className={cn('flex-none', pillClass(cat === c.id))}
-                >
-                  {c.name}
-                </Link>
-              ))}
-            </div>
-          )}
-
-          <EntryList
-            entries={entries}
-            baseCurrency={baseCurrency}
-            windowStart={monthStart}
-            windowEnd={monthEnd}
-            categoryId={cat}
-            emptyState={emptyState}
+          <MonthSwitcher
+            className="mb-4 px-1 flex items-center justify-between"
+            buttonClassName="w-8 h-8 rounded-lg"
+            labelClassName="text-[13px]"
           />
-        </>
+
+          <MonthPending>
+            {/* Category filter chips */}
+            {categories.length > 0 && (
+              <div className="mb-6 px-1 flex gap-2 overflow-x-auto pb-0.5 no-scrollbar scroll-fade-x">
+                <Link href={`/expenses?month=${currentMonthParam}`} className={cn('flex-none', pillClass(!cat))}>
+                  All categories
+                </Link>
+                {categories.map((c) => (
+                  <Link
+                    key={c.id}
+                    href={`/expenses?month=${currentMonthParam}&cat=${c.id}`}
+                    className={cn('flex-none', pillClass(cat === c.id))}
+                  >
+                    {c.name}
+                  </Link>
+                ))}
+              </div>
+            )}
+
+            <EntryList
+              entries={entries}
+              baseCurrency={baseCurrency}
+              windowStart={monthStart}
+              windowEnd={monthEnd}
+              categoryId={cat}
+              emptyState={emptyState}
+            />
+          </MonthPending>
+        </MonthNavProvider>
       )}
 
       {view === 'subscriptions' && (

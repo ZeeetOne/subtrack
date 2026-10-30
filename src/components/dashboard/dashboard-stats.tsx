@@ -4,6 +4,7 @@ import { Suspense, use } from 'react'
 import dynamic from 'next/dynamic'
 import { TrendingUp, Repeat, Receipt, CalendarClock } from 'lucide-react'
 import { SpendingHeatmap } from './spending-heatmap'
+import { MonthPending } from '@/components/layout/month-nav'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useOutbox } from '@/components/offline/outbox-provider'
 import { mergePending } from '@/lib/offline/merge'
@@ -27,11 +28,8 @@ interface DashboardStatsProps {
   baseCurrency: string
   /** Unresolved on purpose — see buildSubscriptionEstimate. */
   subscriptionEstimate: Promise<SubscriptionEstimate>
-  monthLabel: string
   year: number
   month: number
-  prevHref: string
-  nextHref: string
   todayStr: string
 }
 
@@ -152,11 +150,8 @@ export function DashboardStats({
   monthBuckets,
   baseCurrency,
   subscriptionEstimate,
-  monthLabel,
   year,
   month,
-  prevHref,
-  nextHref,
   todayStr,
 }: DashboardStatsProps) {
   const outbox = useOutbox()
@@ -180,7 +175,7 @@ export function DashboardStats({
         <RateWarnings estimate={subscriptionEstimate} />
       </Suspense>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <MonthPending className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           icon={<TrendingUp className="w-3.5 h-3.5 text-[var(--primary)]" />}
           label="This month"
@@ -199,24 +194,23 @@ export function DashboardStats({
         <Suspense fallback={<SubscriptionEstimateFallback />}>
           <SubscriptionEstimateCard estimate={subscriptionEstimate} baseCurrency={baseCurrency} />
         </Suspense>
-      </div>
+      </MonthPending>
 
       <SpendingHeatmap
-        monthLabel={monthLabel}
         year={year}
         month={month}
         days={stats.heatmapDays}
         baseCurrency={baseCurrency}
-        prevHref={prevHref}
-        nextHref={nextHref}
         todayStr={todayStr}
       />
 
-      <SpendCharts
-        entries={stats.monthEntries}
-        monthlyTotals={stats.monthlyTotals}
-        baseCurrency={baseCurrency}
-      />
+      <MonthPending>
+        <SpendCharts
+          entries={stats.monthEntries}
+          monthlyTotals={stats.monthlyTotals}
+          baseCurrency={baseCurrency}
+        />
+      </MonthPending>
     </>
   )
 }
