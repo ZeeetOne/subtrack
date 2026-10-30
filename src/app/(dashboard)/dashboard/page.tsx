@@ -4,10 +4,11 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { Skeleton } from '@/components/ui/skeleton'
 import { subMonths, format } from 'date-fns'
-import { CalendarClock, History, ChevronLeft, ChevronRight } from 'lucide-react'
+import { CalendarClock, History } from 'lucide-react'
 import { DueCard } from '@/components/spend/due-card'
 import { EntryList } from '@/components/spend/entry-list'
 import { DashboardStats } from '@/components/dashboard/dashboard-stats'
+import { MonthNavProvider, MonthSwitcher, MonthPending } from '@/components/layout/month-nav'
 import { SyncStatus } from '@/components/offline/sync-status'
 import { getCurrentUserId } from '@/lib/current-user'
 import { buildSubscriptionEstimate, type SubscriptionEstimate } from '@/lib/subscription-estimate'
@@ -119,9 +120,6 @@ export default async function DashboardPage({
   const monthStart = toLocalDateString(monthStartDate)
   const monthEnd = toLocalDateString(monthEndDate)
   const monthLabel = monthStartDate.toLocaleString('default', { month: 'long', year: 'numeric' })
-  const monthParamStr = (y: number, m: number) => `${y}-${String(m + 1).padStart(2, '0')}`
-  const prevHref = `/dashboard?month=${monthParamStr(month === 0 ? year - 1 : year, month === 0 ? 11 : month - 1)}`
-  const nextHref = `/dashboard?month=${monthParamStr(month === 11 ? year + 1 : year, month === 11 ? 0 : month + 1)}`
 
   // 6-month window ending at the viewed month — one query covers the month's
   // own entries (sliced below), the trailing-6-months chart, and "recent".
@@ -186,6 +184,7 @@ export default async function DashboardPage({
   const upcomingRules = activeRules.filter((r) => r.next_due > todayStr && r.next_due <= in30Days)
 
   return (
+    <MonthNavProvider basePath="/dashboard" year={year} month={month} monthLabel={monthLabel}>
     <div className="pb-24 font-sans">
       <div className="mb-8 px-1 flex items-start justify-between flex-wrap gap-3">
         <div>
@@ -197,25 +196,11 @@ export default async function DashboardPage({
             <SyncStatus />
           </div>
         </div>
-        <div className="flex items-center gap-1 bg-[var(--card)] border border-[var(--border)] rounded-full px-1 py-1">
-          <Link
-            href={prevHref}
-            className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-            aria-label="Previous month"
-          >
-            <ChevronLeft className="w-4 h-4" />
-          </Link>
-          <span className="text-[13px] font-bold text-[var(--foreground)] tabular-nums px-2 min-w-[130px] text-center">
-            {monthLabel}
-          </span>
-          <Link
-            href={nextHref}
-            className="w-8 h-8 rounded-full flex items-center justify-center text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--muted)] transition-colors"
-            aria-label="Next month"
-          >
-            <ChevronRight className="w-4 h-4" />
-          </Link>
-        </div>
+        <MonthSwitcher
+          className="flex items-center gap-1 bg-[var(--card)] border border-[var(--border)] rounded-full px-1 py-1"
+          buttonClassName="w-8 h-8 rounded-full"
+          labelClassName="text-[13px] px-2 min-w-[130px]"
+        />
       </div>
 
       {/* Rate-source warnings now live inside DashboardStats, behind the same
@@ -255,11 +240,8 @@ export default async function DashboardPage({
           monthBuckets={monthBuckets}
           baseCurrency={baseCurrency}
           subscriptionEstimate={subscriptionEstimate}
-          monthLabel={monthLabel}
           year={year}
           month={month}
-          prevHref={prevHref}
-          nextHref={nextHref}
           todayStr={todayStr}
         />
 
@@ -299,6 +281,7 @@ export default async function DashboardPage({
             </Link>
           </div>
 
+          <MonthPending>
           <EntryList
             entries={sixMonthEntries}
             baseCurrency={baseCurrency}
@@ -314,8 +297,10 @@ export default async function DashboardPage({
               </div>
             }
           />
+          </MonthPending>
         </div>
       </div>
     </div>
+    </MonthNavProvider>
   )
 }
